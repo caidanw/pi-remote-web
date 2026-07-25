@@ -77,10 +77,10 @@ export default function App() {
         </div>
         <CopyCommand command={INSTALL} />
         <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
-          <Pill>127.0.0.1 only</Pill>
-          <Pill>REST + SSE</Pill>
-          <Pill>no telemetry</Pill>
-          <Pill>pi owns runtime</Pill>
+          <Pill>live attach</Pill>
+          <Pill>multi-session</Pill>
+          <Pill>local-only</Pill>
+          <Pill>uses your pi setup</Pill>
         </div>
       </section>
 
