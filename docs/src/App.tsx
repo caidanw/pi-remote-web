@@ -1,7 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-
-export const Route = createFileRoute('/')({ component: Home })
 
 const INSTALL = 'pi install npm:pi-gui-extension'
 const GITHUB = 'https://github.com/ankitchouhan1020/pi-gui-extension'
@@ -55,7 +52,7 @@ const FAQ: Row[] = [
   { name: 'Is this an IDE?', detail: 'No. It is a workspace for running, watching, and steering pi sessions.' },
 ]
 
-function Home() {
+export default function App() {
   return (
     <main className="mx-auto flex max-w-[720px] flex-col gap-11 px-6 pt-[12vh] pb-[14vh] font-mono text-[14px] leading-[1.6]">
       <header className="flex flex-col gap-3">
