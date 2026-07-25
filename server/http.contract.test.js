@@ -131,6 +131,14 @@ describe("HTTP wire contract", () => {
     assert.ok(body.open >= 1);
   });
 
+  it("GET /api/customization returns safe defaults", async () => {
+    const { res, body } = await api(base, "/api/customization");
+    assert.equal(res.status, 200);
+    assert.equal(body.config.version, 1);
+    assert.ok(Array.isArray(body.warnings));
+    assert.equal(typeof body.trustedProject, "boolean");
+  });
+
   it("GET /api/sessions lists running hub id", async () => {
     const { res, body } = await api(
       base,

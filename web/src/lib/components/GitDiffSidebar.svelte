@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import {
     getGitStatus,
     getGitDiff,
@@ -65,7 +66,18 @@
   }
 
   let width = $state(loadWidth());
+  let widthOverridden = $state(false);
   let resizing = $state(false);
+
+  onMount(() => {
+    const update = (event: Event) => {
+      if (widthOverridden || localStorage.getItem(WIDTH_KEY) !== null) return;
+      const n = (event as CustomEvent<{ appearance?: { rightSidebarWidth?: number } }>).detail?.appearance?.rightSidebarWidth;
+      if (typeof n === "number") width = clampWidth(n);
+    };
+    window.addEventListener("pi-gui:customization", update);
+    return () => window.removeEventListener("pi-gui:customization", update);
+  });
   /** Soft-wrap long lines (persisted). */
   let wrap = $state(
     (() => {
@@ -221,6 +233,7 @@
       el.removeEventListener("pointerup", onUp);
       el.removeEventListener("pointercancel", onUp);
       resizing = false;
+      widthOverridden = true;
       try {
         localStorage.setItem(WIDTH_KEY, String(width));
       } catch {

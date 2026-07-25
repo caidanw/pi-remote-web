@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import type { SessionRow } from "$lib/api";
   import Separator from "agentic-ui-kit/components/ui/separator.svelte";
   import ThemeToggle from "agentic-ui-kit/components/ui/theme-toggle.svelte";
@@ -70,7 +71,18 @@
   }
 
   let width = $state(loadWidth());
+  let widthOverridden = $state(false);
   let resizing = $state(false);
+
+  onMount(() => {
+    const update = (event: Event) => {
+      if (widthOverridden || localStorage.getItem(WIDTH_KEY) !== null) return;
+      const n = (event as CustomEvent<{ appearance?: { sidebarWidth?: number } }>).detail?.appearance?.sidebarWidth;
+      if (typeof n === "number") width = clampWidth(n);
+    };
+    window.addEventListener("pi-gui:customization", update);
+    return () => window.removeEventListener("pi-gui:customization", update);
+  });
 
   function onResizePointerDown(e: PointerEvent) {
     e.preventDefault();
@@ -89,6 +101,7 @@
       el.removeEventListener("pointerup", onUp);
       el.removeEventListener("pointercancel", onUp);
       resizing = false;
+      widthOverridden = true;
       try {
         localStorage.setItem(WIDTH_KEY, String(width));
       } catch {

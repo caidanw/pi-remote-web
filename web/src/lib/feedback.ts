@@ -4,6 +4,7 @@ const SOUND_KEY = "pi-gui-sound-enabled";
 const SOUND_EVENT = "pi-gui:sound-change";
 const DEFAULT_GAIN = 0.035;
 
+let feedbackConfig: { enabled?: boolean; volume?: number; turnComplete?: string } = {};
 let context: AudioContext | null = null;
 let lastPlayed = new Map<FeedbackCue, number>();
 
@@ -20,11 +21,17 @@ export function prefersReducedMotion() {
 
 export function isSoundEnabled() {
   if (typeof window === "undefined" || prefersReducedMotion()) return false;
+  if (feedbackConfig.enabled === false) return false;
   try {
     return window.localStorage.getItem(SOUND_KEY) !== "0";
   } catch {
     return true;
   }
+}
+
+export function setFeedbackConfig(config: typeof feedbackConfig) {
+  feedbackConfig = config;
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(SOUND_EVENT));
 }
 
 export function setSoundEnabled(enabled: boolean) {
@@ -97,6 +104,13 @@ export function playFeedback(cue: FeedbackCue, options?: { force?: boolean }) {
   lastPlayed.set(cue, now);
 
   try {
+    if (cue === "success" && feedbackConfig.turnComplete) {
+      const audio = new Audio(feedbackConfig.turnComplete);
+      audio.volume = Math.max(0, Math.min(1, feedbackConfig.volume ?? 0.2));
+      void audio.play().catch(() => {});
+      return;
+    }
+
     context ??= new window.AudioContext();
     if (context.state === "suspended") void context.resume();
     const start = context.currentTime + 0.008;
@@ -113,7 +127,7 @@ export function playFeedback(cue: FeedbackCue, options?: { force?: boolean }) {
         toneEnd,
       );
       gain.gain.setValueAtTime(0.0001, toneStart);
-      gain.gain.exponentialRampToValueAtTime(DEFAULT_GAIN * tone.gain, toneStart + 0.012);
+      gain.gain.exponentialRampToValueAtTime(DEFAULT_GAIN * (feedbackConfig.volume ?? 0.2) * 5 * tone.gain, toneStart + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.0001, toneEnd);
       oscillator.connect(gain);
       gain.connect(context.destination);

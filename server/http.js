@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hub } from "./hub.js";
+import { assetStream, loadCustomization } from "./customization.js";
 import {
   connectedPayload,
   shouldReplayRing,
@@ -219,6 +220,9 @@ const MIME = {
   ".woff2": "font/woff2",
   ".json": "application/json",
   ".map": "application/json",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
 };
 
 /**
@@ -398,6 +402,26 @@ async function handleApi(req, res) {
           error: e instanceof Error ? e.message : String(e),
         });
       }
+    }
+
+    // GET /api/customization?cwd= — local UI customization
+    if (method === "GET" && pathname === "/api/customization") {
+      return json(res, 200, await loadCustomization(searchParams.get("cwd") || undefined));
+    }
+
+    // GET /api/customization/asset?path=&cwd= — local assets only
+    if (method === "GET" && pathname === "/api/customization/asset") {
+      const stream = assetStream(
+        searchParams.get("path") || "",
+        searchParams.get("cwd") || undefined,
+      );
+      if (!stream) return text(res, 404, "Not found");
+      res.writeHead(200, {
+        "Content-Type": MIME[path.extname(searchParams.get("path") || "")] || "application/octet-stream",
+        "Access-Control-Allow-Origin": "*",
+      });
+      stream.pipe(res);
+      return;
     }
 
     // GET /api/models?sessionId=

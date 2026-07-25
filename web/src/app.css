@@ -14,6 +14,8 @@
   /* Chat shell / sticky prompt canvas (warm off-white, not zinc gray) */
   --pi-canvas: #faf9f7;
   --pi-canvas-footer: color-mix(in oklab, #faf9f7 92%, white);
+  --pi-sidebar-width: 360px;
+  --pi-right-sidebar-width: 440px;
 }
 
 html.dark {
@@ -54,6 +56,23 @@ body {
   .pi-tactile:active:not(:disabled) {
     transform: scale(0.96);
   }
+}
+
+html[data-pi-density="compact"] .sidebar-row-main {
+  padding-block: 0.25rem;
+}
+
+html[data-pi-density="spacious"] .sidebar-row-main {
+  padding-block: 0.55rem;
+}
+
+html[data-pi-motion="none"] *,
+html[data-pi-motion="none"] *::before,
+html[data-pi-motion="none"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

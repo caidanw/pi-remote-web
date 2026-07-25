@@ -27,6 +27,7 @@
   import ForkConfirmDialog from "$lib/components/ForkConfirmDialog.svelte";
   import TreeNavigateDialog from "$lib/components/TreeNavigateDialog.svelte";
   import SkillWorkspaceDialog from "$lib/components/SkillWorkspaceDialog.svelte";
+  import { loadAndApplyCustomization } from "$lib/customization";
   const SIDEBAR_KEY = "pi-gui-sidebar-open";
   const GIT_SIDEBAR_KEY = "pi-gui-git-sidebar-open";
 
@@ -99,6 +100,10 @@
   let defaultCwd = $state("");
   /** Prevent double-click open storms */
   let opening = false;
+
+  $effect(() => {
+    void loadAndApplyCustomization(selected?.cwd).catch(() => {});
+  });
   /** Apply /sessions/:id once after first list load */
   let routedOnce = false;
 

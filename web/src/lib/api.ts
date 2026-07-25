@@ -111,6 +111,23 @@ export function getHealth() {
   return req<{ ok: boolean; open: number; cwd?: string }>("/api/health");
 }
 
+export type CustomizationConfig = {
+  version: 1;
+  appearance?: { sidebarWidth?: number; rightSidebarWidth?: number; density?: "compact" | "comfortable" | "spacious" };
+  motion?: { intensity?: "none" | "subtle" | "full" };
+  sound?: { enabled?: boolean; volume?: number; turnComplete?: string };
+  theme?: { accent?: string; radius?: string };
+};
+
+export function getCustomization(cwd?: string) {
+  const q = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
+  return req<{
+    config: CustomizationConfig;
+    warnings: { source: string; path: string; message: string }[];
+    trustedProject: boolean;
+  }>(`/api/customization${q}`);
+}
+
 /** List subdirectories for the in-app folder browser. */
 export function listFs(path?: string) {
   const q = path ? `?path=${encodeURIComponent(path)}` : "";
