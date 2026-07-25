@@ -1,0 +1,153 @@
+# pi-gui LLM instructions
+
+pi-gui is a localhost multi-session browser UI for pi. Pi owns AgentSession,
+models, auth, tools, skills, extensions, and session JSONL files. pi-gui is a
+thin Svelte client plus Node http/SSE hub over @earendil-works/pi-coding-agent.
+
+## Install / use facts
+
+```bash
+pi install npm:pi-gui-extension
+```
+
+Inside pi:
+
+```text
+/gui                          # live-attach current session + open browser
+/gui <sessionId>              # open session id/path
+/gui open <sessionId> 4000    # custom port
+/gui stop                     # stop host
+```
+
+Localhost only: 127.0.0.1. Do not add public bind/auth unless explicitly asked.
+No Express/socket.io/tRPC; use node:http and SSE.
+
+## Repository map
+
+```text
+extensions/gui.ts        # pi /gui command, in-process attach, port takeover
+server/http.js           # REST + static dist + SSE endpoint
+server/hub.js            # multi-session AgentSession lifecycle (red zone)
+server/sse-protocol.js   # SSE replay/snapshot policy (red zone)
+server/customization.js  # local config + safe asset loading
+web/src/main.ts          # Svelte bootstrap
+web/src/App.svelte       # routing/open session shell
+web/src/lib/api.ts       # browser API client
+web/src/lib/chat-stream.ts # client stream merge (red zone)
+web/src/lib/components/  # UI chrome/components
+web/src/lib/plugins/     # message plugin registry
+web/src/lib/kit/         # vendored UI kit
+web/src/lib/customization.ts # applies local config to UI
+web/src/lib/feedback.ts  # sound/reduced-motion gating
+dist/                    # built web UI shipped by package
+docs/                    # human landing page
+```
+
+## Commands
+
+```bash
+npm test                 # server + stream contracts
+npm run check            # Svelte/TypeScript
+npm run build            # rebuild package-root dist/
+npm run check:docs       # Astro docs check
+```
+
+If web/ changes and the package should ship it, run `npm run build`.
+
+## Safe change boundaries
+
+Prefer the highest zone that works.
+
+### Green: intended customization
+
+- `web/src/lib/plugins/` message renderers
+- Theme tokens / CSS variables / FOUC-safe theme edits
+- Presentation-only UI chrome in `web/src/lib/components/*`
+- Docs / README / llms.txt
+- Client wrappers for existing API routes in `web/src/lib/api.ts`
+
+### Yellow: clear need, small diff
+
+- New REST capability: `hub -> http.js -> api.ts -> UI`
+- `CommandPalette.svelte`: add one command/action, do not restructure
+- `ChatPanel.svelte`, `ComposerPlus.svelte`: careful, streaming UX
+- `App.svelte`, `SessionList.svelte`: routing/sidebar semantics
+- One vendored kit component if already used
+
+### Red: bugfix only + tests
+
+- `server/hub.js` lifecycle, locks, prompt queues, dispose/attach
+- `server/sse-protocol.js` and SSE branch in `server/http.js`
+- `web/src/lib/chat-stream.ts` seq gate/snapshot/message merge
+- Trust boundary, localhost/CORS assumptions
+
+## Local customization contract
+
+Config locations, merge order:
+
+1. Built-in defaults
+2. `~/.pi/agent/pi-gui/config.json`
+3. `.pi/pi-gui/config.json` only after pi trusts the project
+
+Supported v1 keys:
+
+```json
+{
+  "version": 1,
+  "appearance": {
+    "sidebarWidth": 320,
+    "rightSidebarWidth": 440,
+    "density": "compact"
+  },
+  "motion": { "intensity": "subtle" },
+  "sound": {
+    "enabled": true,
+    "volume": 0.2,
+    "turnComplete": "./sounds/complete.ogg"
+  },
+  "theme": {
+    "accent": "#7c6cff",
+    "radius": "10px"
+  }
+}
+```
+
+Validation rules:
+
+- `appearance.sidebarWidth`: number 200..600
+- `appearance.rightSidebarWidth`: number 240..720
+- `appearance.density`: compact | comfortable | spacious
+- `motion.intensity`: none | subtle | full; prefers-reduced-motion wins
+- `sound.enabled`: boolean
+- `sound.volume`: number 0..1
+- `sound.turnComplete`: relative local path only
+- `theme.accent`: #rrggbb or empty
+- `theme.radius`: px or rem
+
+Assets are served only from resolved customization directories. Reject remote
+URLs and `..` traversal. Browser-playable audio: .ogg/.mp3/.wav.
+
+## How to customize code
+
+- Custom message rendering: register in `web/src/lib/plugins/registry.ts` via a
+  small plugin file imported by bootstrap/App. Match narrowly by role/customType.
+- Theme/UI tokens: prefer CSS variables in `web/src/app.css` or kit tokens.
+- UI chrome: edit the smallest component that owns the visible element.
+- New backend capability: add hub method, route in `server/http.js`, typed helper
+  in `web/src/lib/api.ts`, then minimal UI.
+
+## Anti-patterns
+
+- Replacing SSE with WebSockets
+- Adding Express, socket.io, tRPC, or a second server framework
+- Duplicating pi model/auth/settings config
+- Runtime arbitrary Svelte/JS loading for user config
+- Public plugin manifests/marketplace scaffolding
+- Deep `MessageBubble` edits when a message plugin works
+- Wide refactors of hub/chat-stream while adding UI features
+
+## Output expectation for coding agents
+
+Make the smallest working diff. Reuse existing code before adding abstractions.
+For non-trivial logic, add or update one focused test. Keep explanations short
+and list files changed plus checks run.

@@ -1,0 +1,65 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  --color-brand: var(--brand);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #1f2328;
+  --card: #ffffff;
+  --muted-foreground: #59636e;
+  --border: #d1d9e0;
+  --ring: #0969da;
+  --brand: #0969da;
+}
+
+.dark {
+  --background: #08090d;
+  --foreground: #e6edf3;
+  --card: #0d1117;
+  --muted-foreground: #7d8590;
+  --border: #1d232b;
+  --ring: #58a6ff;
+  --brand: #58a6ff;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html {
+    @apply font-sans;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body { @apply bg-background text-foreground; }
+  a { @apply text-foreground transition-colors hover:text-brand; }
+  code { @apply font-mono text-[0.95em] text-foreground; }
+  pre { @apply overflow-x-auto rounded-[9px] border border-border bg-card p-4 text-[13px]; }
+  ::selection { background: color-mix(in oklab, var(--brand) 30%, transparent); }
+}
+
+@layer components {
+  .button {
+    @apply inline-flex items-center gap-2 rounded-[9px] border border-border bg-card px-4 py-[7px] text-foreground transition-colors hover:border-brand hover:bg-brand/8 hover:text-brand;
+  }
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.animate-caret { animation: blink 1.1s step-end infinite; }

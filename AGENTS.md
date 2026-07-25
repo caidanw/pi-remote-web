@@ -4,20 +4,15 @@ Localhost web UI for pi. Thin Svelte client + multi-session hub over `@earendil-
 
 Repository guidance for contributors and coding agents. The published npm package contains only the extension runtime and prebuilt UI.
 
-## Docs map (read selectively)
+## Docs map
 
-| Task | Open |
+| Audience | Open |
 |------|------|
-| **Any code change** | [change boundaries](./docs/src/content/docs/contributing/boundaries.md) first |
-| How pi-gui relates to pi / `/gui` | [ownership](./docs/src/content/docs/concepts/ownership.md) |
-| Customize plugins / theme / UI / API | [extension paths](./docs/src/content/docs/extend/index.md) |
-| Concrete how-to | [recipes](./docs/src/content/docs/recipes/index.md) |
-| Routes / SSE / tree | [reference](./docs/src/content/docs/reference/) |
-| System design | [architecture](./docs/src/content/docs/concepts/architecture.md) |
-| Install / use | [README.md](./README.md) |
-| Documentation home | [docs site source](./docs/src/content/docs/index.mdx) |
+| **Coding agents / any code change** | [llms.txt](./llms.txt) first |
+| Humans / install / what it does | [docs landing page](./docs/src/routes/index.tsx) |
+| Package overview | [README.md](./README.md) |
 
-Do **not** load every doc for a small UI change.
+Do **not** crawl old docs for a small UI change; the operating contract lives in `llms.txt`.
 
 ## Layout
 
@@ -27,7 +22,7 @@ server/               # cli, http, hub, sse-protocol
 web/src/lib/
   api.ts · chat-stream.ts · plugins/ · components/ · kit/
 dist/                 # production UI (npm run build)
-docs/                 # Astro Starlight site; content in src/content/docs/
+docs/                 # TanStack Start landing site
 ```
 
 UI source is `web/`; `dist/` is build output (what the server ships).
@@ -39,6 +34,7 @@ npm install && npm install --prefix web
 npm run dev:server   # :3847
 npm run dev:web      # :5173 proxies /api
 # package UI: npm run build
+# build docs: npm run build:docs
 # test extension: pi install <path> → /gui
 ```
 
@@ -50,7 +46,7 @@ Port: `PI_GUI_PORT` (default `3847`).
 - **Yellow:** `components/*`, new `hub → http → api.ts` routes, kit fork of one component
 - **Red:** `hub.js` lifecycle, `sse-protocol.js`, `chat-stream.ts` — bugfix only + tests
 
-Details: [change boundaries](./docs/src/content/docs/contributing/boundaries.md).
+Details: [llms.txt](./llms.txt).
 
 ## Conventions
 

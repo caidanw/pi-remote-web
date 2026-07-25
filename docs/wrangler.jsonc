@@ -1,6 +1,10 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "pi-gui",
-  "pages_build_output_dir": "./dist",
-  "compatibility_date": "2026-07-18"
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pi-gui-docs",
+  "compatibility_date": "2026-07-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "observability": {
+    "enabled": true
+  }
 }

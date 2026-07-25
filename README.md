@@ -67,17 +67,12 @@ Models, auth, skills, and extensions come from pi — this package does not add 
 
 ## Documentation
 
-Read the published documentation at
-[pi-gui.pages.dev](https://pi-gui.pages.dev/).
+For humans: [pi-gui.pages.dev](https://pi-gui.pages.dev/) is a TanStack Start landing page with install, usage, and customization examples.
 
-The documentation is an Astro Starlight site with canonical content in
-`docs/src/content/docs/`.
+For coding agents: read [`llms.txt`](./llms.txt) before changing code. It contains the repo map, safe change boundaries, customization contract, anti-patterns, and test commands.
 
 ```bash
 npm install --prefix docs
 npm run dev:docs       # local docs server
-npm run build:docs     # static site in docs/dist/
+npm run build:docs     # TanStack Start build in docs/dist/
 ```
-
-Contributors should start with the [change boundaries](./docs/src/content/docs/contributing/boundaries.md)
-and [extension paths](./docs/src/content/docs/extend/index.md).
