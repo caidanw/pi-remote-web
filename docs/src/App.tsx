@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 const INSTALL = 'pi install npm:pi-gui-extension'
 const GITHUB = 'https://github.com/ankitchouhan1020/pi-gui-extension'
-const SCREENSHOT = 'https://github.com/user-attachments/assets/e1da0c5c-fe19-445e-9f07-24625eeef5f9'
+const SCREENSHOT = '/screenshot.webp'
 
 type Row = { name: string; detail: ReactNode }
 
@@ -84,7 +84,7 @@ export default function App() {
       </section>
 
       <figure className="m-0 flex flex-col gap-2">
-        <img src={SCREENSHOT} alt="pi-gui browser workspace with chat, tools, git, and files" width={2940} height={1846} className="block w-full rounded-lg border border-border bg-card" />
+        <img src={SCREENSHOT} alt="pi-gui browser workspace with chat, tools, git, and files" width={1344} height={844} className="block w-full rounded-lg border border-border bg-card" />
         <figcaption className="text-[13px] text-muted-foreground">Sessions, chat, tool output, git, and files in one local browser workspace</figcaption>
       </figure>
 
