@@ -71,11 +71,10 @@ export default function App() {
       </header>
 
       <section className="flex flex-col gap-3.5">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <a className="button" href={GITHUB} target="_blank" rel="noreferrer">GitHub</a>
-          <a className="button" href={`${GITHUB}#readme`} target="_blank" rel="noreferrer">README</a>
+        <div className="flex flex-wrap items-stretch gap-2.5">
+          <CopyCommand command={INSTALL} />
+          <a className="button" href={GITHUB} target="_blank" rel="noreferrer"><GitHubIcon />GitHub</a>
         </div>
-        <CopyCommand command={INSTALL} />
         <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
           <Pill>live attach</Pill>
           <Pill>multi-session</Pill>
@@ -159,6 +158,14 @@ function DefinitionRow({ name, detail }: Row) {
 
 function Pill({ children }: { children: ReactNode }) {
   return <span className="inline-flex items-center rounded-[6px] border border-border px-2 py-[3px]">{children}</span>
+}
+
+function GitHubIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="size-4 fill-current">
+      <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.77.4.08.55-.18.55-.4v-1.4c-2.23.5-2.7-1.1-2.7-1.1-.36-.95-.89-1.2-.89-1.2-.73-.51.06-.5.06-.5.8.06 1.23.85 1.23.85.72 1.26 1.88.9 2.34.69.07-.54.28-.9.51-1.11-1.78-.21-3.64-.91-3.64-4.04 0-.9.31-1.62.82-2.2-.08-.2-.36-1.03.08-2.16 0 0 .68-.22 2.2.84A7.48 7.48 0 0 1 8 3.96c.68 0 1.36.1 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.13.16 1.96.08 2.16.51.58.82 1.3.82 2.2 0 3.14-1.87 3.83-3.65 4.03.29.26.55.77.55 1.55v2.3c0 .22.14.48.55.4A8.12 8.12 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+    </svg>
+  )
 }
 
 function CopyCommand({ command }: { command: string }) {
