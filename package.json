@@ -31,6 +31,7 @@
     "index.js",
     "server/http.js",
     "server/hub.js",
+    "server/customization.js",
     "server/skill-workspace.js",
     "server/sse-protocol.js",
     "extensions/gui.ts",
