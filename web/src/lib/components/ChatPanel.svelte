@@ -663,7 +663,7 @@
     editing = token;
     draft = body;
     attachments = [];
-    focusComposer();
+    focusComposer({ force: true });
     try {
       const hit = await findForkEntry(msg);
       if (editing?.token === token.token) editing.entryId = hit?.entryId ?? null;
@@ -680,7 +680,7 @@
     editing = null;
     draft = current.restoreDraft;
     attachments = current.restoreAttachments;
-    focusComposer();
+    focusComposer({ force: true });
   }
 
   async function submitInlineEdit() {
@@ -965,7 +965,18 @@
   }
 
   /** Focus the inline editor first, otherwise the home/footer composer. */
-  function focusComposer() {
+  /**
+   * Touch devices open the keyboard (and zoom) on focus, so only focus the
+   * composer when the user asked for it — not when a session merely opens.
+   */
+  function focusComposer(opts?: { force?: boolean }) {
+    if (!opts?.force) {
+      try {
+        if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return;
+      } catch {
+        /* treat as desktop */
+      }
+    }
     void tick().then(() => {
       const el = document.querySelector(
         "section.chat-canvas [data-inline-message-editor] [data-slot=textarea], section.chat-canvas [data-slot=textarea]",
@@ -1458,7 +1469,7 @@
 
   function seedPrompt(text: string) {
     draft = text;
-    focusComposer();
+    focusComposer({ force: true });
   }
 
   function onTextareaKey(e: KeyboardEvent) {

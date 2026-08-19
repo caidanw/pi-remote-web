@@ -351,7 +351,7 @@
 <aside
   class="relative flex h-full shrink-0 flex-col border-l border-border bg-card"
   class:select-none={resizing}
-  style="width: {width}px"
+  style="width: min({width}px, 100vw)"
 >
   <!-- resize from left edge -->
   <div

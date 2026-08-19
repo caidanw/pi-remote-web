@@ -86,6 +86,12 @@
   const role = $derived(message.role || "unknown");
   const parts = $derived(getParts(message));
   const text = $derived(messageText(message));
+  const previewText = $derived(
+    (text || (typeof message.content === "string" ? message.content : ""))
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+
   const msgStreamId = $derived(
     String(message._key ?? message.id ?? message.timestamp ?? message.role ?? "msg"),
   );
@@ -359,13 +365,23 @@
                 </Button>
               </div>
             {/if}
-            <div class="{sticky ? 'max-h-[40vh] overflow-y-auto' : ''}">
-              <MessageContent
-                variant="card"
-                class="w-full max-w-full border-border/80"
-                content={text || (typeof message.content === "string" ? message.content : "")}
-              />
-            </div>
+            {#if sticky && stuck}
+              <!-- Pinned to the top: a two-line summary, not the whole prompt. -->
+              <div
+                class="pinned-preview w-full max-w-full rounded-xl border border-border/80 bg-card px-4 py-3 text-sm"
+                title={text}
+              >
+                {previewText}
+              </div>
+            {:else}
+              <div class="{sticky ? 'max-h-[40vh] overflow-y-auto' : ''}">
+                <MessageContent
+                  variant="card"
+                  class="w-full max-w-full border-border/80"
+                  content={text || (typeof message.content === "string" ? message.content : "")}
+                />
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -481,3 +497,14 @@
     </Message>
   {/if}
 </div>
+
+<style>
+  /* Two lines keeps the pinned prompt readable without eating the viewport. */
+  .pinned-preview {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+</style>

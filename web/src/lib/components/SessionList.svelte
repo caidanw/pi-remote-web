@@ -353,7 +353,7 @@
 <aside
   class="relative flex h-full shrink-0 flex-col border-r border-border bg-card"
   class:select-none={resizing}
-  style="width: {width}px"
+  style="width: min({width}px, 100vw)"
 >
   <div
     class="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border px-3"
