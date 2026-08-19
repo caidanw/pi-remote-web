@@ -48,10 +48,20 @@ export function hasAssistantWork(message: ChatMessage): boolean {
   );
 }
 
-/** A terminal model response, as opposed to an assistant tool-use step. */
+/**
+ * A terminal model response, as opposed to an assistant tool-use step.
+ * A still-streaming message has no terminal stop reason yet, but its text is
+ * the answer being written, so it must render instead of hiding inside work.
+ */
 export function isFinalAssistantResponse(message: ChatMessage): boolean {
   if (!hasAssistantText(message)) return false;
-  return message.stopReason === "stop" || message.stopReason === "length";
+  const stopReason = message.stopReason;
+  return (
+    stopReason === "stop" ||
+    stopReason === "length" ||
+    stopReason === "pending" ||
+    stopReason == null
+  );
 }
 
 export function formatWorkDuration(milliseconds: number): string {

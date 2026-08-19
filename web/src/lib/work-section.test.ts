@@ -35,6 +35,24 @@ describe("work section helpers", () => {
     assert.equal(isFinalAssistantResponse(final), true);
   });
 
+  it("renders streaming answer text before the stop reason lands", () => {
+    // Live terminal sessions deliver `pending` until the message ends.
+    const streaming = {
+      role: "assistant",
+      stopReason: "pending",
+      content: [{ type: "text", text: "Here is the ans" }],
+    };
+    const unknownStop = { role: "assistant", content: [{ type: "text", text: "Answer" }] };
+    const streamingToolStep = {
+      role: "assistant",
+      stopReason: "pending",
+      content: [{ type: "thinking", thinking: "planning" }],
+    };
+    assert.equal(isFinalAssistantResponse(streaming), true);
+    assert.equal(isFinalAssistantResponse(unknownStop), true);
+    assert.equal(isFinalAssistantResponse(streamingToolStep), false);
+  });
+
   it("formats stored timestamps and elapsed work time", () => {
     assert.equal(messageTimestamp({ role: "user", timestamp: "2026-07-18T10:00:00Z" }), Date.parse("2026-07-18T10:00:00Z"));
     assert.equal(formatWorkDuration(79_000), "1m 19s");
