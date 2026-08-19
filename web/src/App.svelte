@@ -877,12 +877,12 @@
       {onTerminalSwitch}
       {treeNavigation}
       showExpandSidebar={!sidebarOpen}
-      showExpandGit={!gitSidebarOpen && !selected?.remote}
+      showExpandGit={!gitSidebarOpen}
       onExpandSidebar={() => setSidebarOpen(true)}
       onExpandGit={() => setGitSidebarOpen(true)}
     />
   </div>
-  {#if gitSidebarOpen && !selected?.remote}
+  {#if gitSidebarOpen}
     <button
       type="button"
       class="fixed inset-0 z-40 bg-black/50 md:hidden"
@@ -891,7 +891,7 @@
     ></button>
     <div class="fixed inset-y-0 right-0 z-50 flex md:static md:z-auto">
       <GitDiffSidebar
-        sessionId={selected?.running ? selected.id : undefined}
+        sessionId={selected?.running || selected?.remote ? selected.id : undefined}
         cwd={selected?.cwd}
         onCollapse={() => setGitSidebarOpen(false)}
       />

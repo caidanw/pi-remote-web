@@ -1213,7 +1213,11 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
     // GET /api/sessions/:id/git?path= — unified diff for one file
     id = sessionAction(pathname, "git");
     if (method === "GET" && id) {
-      const s = await localSource(workers, id).ensure(id);
+      // Terminal-owned sessions have no local runtime; their cwd comes from the broker.
+      const s = hasRemote(remoteBroker, id)
+        ? remoteBroker.getSessionRow(id)
+        : await localSource(workers, id).ensure(id);
+      if (!s.cwd) return json(res, 400, { error: "Session has no working directory" });
       const file = searchParams.get("path");
       try {
         if (file) return json(res, 200, await gitFileDiff(s.cwd, file));

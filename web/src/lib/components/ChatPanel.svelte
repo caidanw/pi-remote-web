@@ -222,6 +222,8 @@
   let fetchLimit = $state(FETCH_WINDOW);
   let hasOlderHistory = $state(false);
   let loadingOlder = $state(false);
+  /** First transcript paint for a session; keeps a slow open from looking dead. */
+  let loadingTranscript = $state(false);
   let showAllMsgs = $state(false);
 
   /** Prefill from last session; overwritten when a live session loads. */
@@ -807,12 +809,17 @@
    */
   async function runSnapshot(id: string, info: ConnectedInfo) {
     if (wiredId !== id) return;
+    const showLoader = messages.length === 0;
+    if (showLoader) loadingTranscript = true;
     try {
-      const [row, { messages: m }] = await Promise.all([
+      // Same window as load(): the snapshot path must not pull a whole transcript.
+      const [row, page] = await Promise.all([
         getSession(id),
-        getMessages(id),
+        getMessages(id, { limit: fetchLimit }),
       ]);
+      const m = page.messages;
       if (wiredId !== id) return;
+      hasOlderHistory = Boolean(page.hasMore);
       const effects = stream.commitSnapshot(m, info.seq);
       bashRunning = Boolean(row.isBashRunning);
       stream.noteServerBusy(Boolean(row.streaming));
@@ -828,6 +835,8 @@
         stream.commitSnapshot(stream.messages, info.seq);
         paintMessages(false);
       }
+    } finally {
+      if (showLoader) loadingTranscript = false;
     }
   }
 
@@ -910,6 +919,9 @@
       messages = cached;
       if (!opts?.quiet) scrollBottom();
     }
+    // `quiet` only suppresses errors and scrolling; an empty view still needs a loader.
+    const showLoader = messages.length === 0;
+    if (showLoader) loadingTranscript = true;
     try {
       const page = await getMessages(id, { limit: fetchLimit });
       const m = page.messages;
@@ -927,6 +939,8 @@
       if (!opts?.quiet && !isNotOpenErr(err)) {
         error = err instanceof Error ? err.message : String(err);
       }
+    } finally {
+      if (showLoader) loadingTranscript = false;
     }
   }
 
@@ -1535,7 +1549,10 @@
   );
 
   /** Home / empty chat: centered prompt (Cursor-style). */
-  const isHome = $derived(messages.length === 0 && !busy && !sending);
+  // While a transcript loads, showing the home hero looks like the session vanished.
+  const isHome = $derived(
+    messages.length === 0 && !busy && !sending && !loadingTranscript,
+  );
 
   let workTick = $state(0);
   $effect(() => {
@@ -1765,6 +1782,19 @@
         onscroll={onScroll}
       >
         <div class="mx-auto flex w-full max-w-5xl flex-col gap-5 py-6">
+          {#if loadingTranscript && messages.length === 0}
+            <div
+              class="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              <span
+                class="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                aria-hidden="true"
+              ></span>
+              Loading conversation…
+            </div>
+          {/if}
           {#if hasOlderHistory}
             <button
               type="button"
