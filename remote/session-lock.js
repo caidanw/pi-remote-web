@@ -91,6 +91,18 @@ export async function acquireSessionLock(options) {
 }
 
 /** @param {{ lockDir: string; nonce: string }} lock */
+/** Transfer a held browser lock's liveness marker to its spawned worker PID. */
+export async function updateSessionLockPid(lock, pid) {
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error("valid worker PID required");
+  const owner = await readOwner(lock.lockDir);
+  if (!owner || owner.nonce !== lock.nonce) return null;
+  const updated = { ...owner, pid };
+  const temp = path.join(lock.lockDir, `.owner-${process.pid}-${randomUUID()}.json`);
+  await writeFile(temp, JSON.stringify(updated), { mode: 0o600 });
+  await rename(temp, path.join(lock.lockDir, "owner.json"));
+  return { ...lock, pid };
+}
+
 export async function releaseSessionLock(lock) {
   const owner = await readOwner(lock.lockDir);
   if (!owner || owner.nonce !== lock.nonce) return false;

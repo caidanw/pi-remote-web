@@ -17,6 +17,10 @@ export type SessionRow = {
   remote?: boolean;
   runtimeId?: string;
   connected?: boolean;
+  owner?: "terminal" | "browser" | "offline";
+  browserOwned?: boolean;
+  busy?: boolean;
+  releasing?: boolean;
   streaming?: boolean;
   thinkingLevel?: string;
   thinking?: string;
@@ -279,6 +283,13 @@ export function closeSession(id: string) {
   return req<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+export function releaseSession(id: string) {
+  return req<{ ok: boolean; path?: string }>(
+    `/api/sessions/${encodeURIComponent(id)}/release`,
+    { method: "POST" },
+  );
 }
 
 export function listModels(sessionId?: string) {

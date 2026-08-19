@@ -23,6 +23,7 @@ import {
 const hostCtl = { stayAlive: false, close: null };
 
 /** @typedef {import("./remote-broker.js").RemoteBroker} RemoteBroker */
+/** @typedef {import("./rpc-workers.js").RpcWorkerManager} RpcWorkerManager */
 
 function remoteRow(broker, session) {
   if (typeof broker?.getSessionRow === "function") {
@@ -54,6 +55,13 @@ export function mergeRemoteSessions(local, broker) {
     ...remote,
     ...local.filter((row) => !paths.has(row.path) && !ids.has(row.id)),
   ];
+}
+
+function mergeBrowserSessions(local, workers) {
+  if (!workers) return local;
+  const browser = workers.listSessions();
+  const paths = new Set(browser.map((row) => row.path).filter(Boolean));
+  return [...browser, ...local.filter((row) => !paths.has(row.path))];
 }
 
 function hasRemote(broker, id) {
@@ -393,12 +401,18 @@ function lastEventIdFrom(req, searchParams) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** @param {RpcWorkerManager | undefined} workers @param {string} id */
+function localSource(workers, id) {
+  return workers?.hasSession(id) ? workers : hub;
+}
+
 /**
  * @param {http.IncomingMessage} req
  * @param {http.ServerResponse} res
  * @param {RemoteBroker | undefined} remoteBroker
+ * @param {RpcWorkerManager | undefined} workers
  */
-async function handleApi(req, res, remoteBroker) {
+async function handleApi(req, res, remoteBroker, workers) {
   const { pathname, searchParams } = parsePath(req.url || "/");
   const method = req.method || "GET";
 
@@ -417,7 +431,7 @@ async function handleApi(req, res, remoteBroker) {
     if (method === "GET" && pathname === "/api/health") {
       return json(res, 200, {
         ok: true,
-        open: hub.listOpen().length,
+        open: hub.listOpen().length + (workers?.listSessions().filter((s) => s.running).length ?? 0),
         remote: remoteBroker?.listSessions().length ?? 0,
         cwd: process.cwd(),
       });
@@ -501,7 +515,8 @@ async function handleApi(req, res, remoteBroker) {
           await remoteBroker.command(sessionId, "list_models"),
         );
       }
-      return json(res, 200, { models: await hub.listModels(sessionId) });
+      const source = sessionId ? localSource(workers, sessionId) : hub;
+      return json(res, 200, { models: await source.listModels(sessionId) });
     }
 
     // GET /api/fs?path= — list subdirs for folder browser
@@ -597,7 +612,10 @@ async function handleApi(req, res, remoteBroker) {
     // GET /api/sessions?cwd=
     if (method === "GET" && pathname === "/api/sessions") {
       const cwd = searchParams.get("cwd") || undefined;
-      const sessions = mergeRemoteSessions(await hub.list(cwd), remoteBroker);
+      const sessions = mergeRemoteSessions(
+        mergeBrowserSessions(await hub.list(cwd), workers),
+        remoteBroker,
+      );
       return json(res, 200, { sessions });
     }
 
@@ -606,17 +624,34 @@ async function handleApi(req, res, remoteBroker) {
       const body = await readJson(req);
       const remoteId = body.path && remoteBroker?.findByPath?.(body.path);
       if (remoteId) return json(res, 200, remoteBroker.getSessionRow(remoteId));
-      const opened = await hub.open({
-        path: body.path,
-        content: body.content,
-        filename: body.filename,
-        cwd: body.cwd,
-        fresh: body.fresh ?? (!body.path && body.content == null),
-      });
+      const opened = workers && body.content == null
+        ? await workers.open({
+            path: body.path,
+            cwd: body.cwd,
+            fresh: body.fresh ?? !body.path,
+          })
+        : await hub.open({
+            path: body.path,
+            content: body.content,
+            filename: body.filename,
+            cwd: body.cwd,
+            fresh: body.fresh ?? (!body.path && body.content == null),
+          });
       return json(res, 200, opened);
     }
 
     // --- session sub-routes (more specific first) ---
+
+    let id = sessionAction(pathname, "release");
+    if (method === "POST" && id) {
+      if (!workers?.hasSession(id)) {
+        return json(res, 409, {
+          error: "Only browser-owned sessions can be released",
+          code: "NOT_BROWSER_OWNED",
+        });
+      }
+      return json(res, 200, await workers.release(id));
+    }
 
     const remoteAction = pathname.match(/^\/api\/sessions\/([^/]+)\/([^/]+)$/);
     if (remoteAction) {
@@ -631,13 +666,14 @@ async function handleApi(req, res, remoteBroker) {
     }
 
     // GET /api/sessions/:id/messages
-    let id = sessionAction(pathname, "messages");
+    id = sessionAction(pathname, "messages");
     if (method === "GET" && id) {
       if (hasRemote(remoteBroker, id)) {
         return json(res, 200, { messages: remoteBroker.getMessages(id) });
       }
-      const s = await hub.ensure(id);
-      return json(res, 200, { messages: hub.getMessages(s.id) });
+      const source = localSource(workers, id);
+      const s = await source.ensure(id);
+      return json(res, 200, { messages: source.getMessages(s.id) });
     }
 
     // POST /api/sessions/:id/prompt  { message, images? }
@@ -657,9 +693,10 @@ async function handleApi(req, res, remoteBroker) {
         });
         return json(res, 202, { ok: true, id });
       }
-      const s = await hub.ensure(id);
-      // 202 fire-and-forget; hub.#failTurn emits error + agent_settled on failure
-      hub.prompt(s.id, body.message, body.images).catch((err) => {
+      const source = localSource(workers, id);
+      const s = await source.ensure(id);
+      // 202 fire-and-forget; the owner emits an error/settled event on failure.
+      source.prompt(s.id, body.message, body.images).catch((err) => {
         console.error("[pi-remote-web] prompt error", s.id, err);
       });
       return json(res, 202, { ok: true, id: s.id });
@@ -672,9 +709,10 @@ async function handleApi(req, res, remoteBroker) {
       if (typeof body.command !== "string" || !/^\/\S+/.test(body.command.trim())) {
         return json(res, 400, { error: "command required" });
       }
-      const s = await hub.ensure(id);
+      const source = localSource(workers, id);
+      const s = await source.ensure(id);
       try {
-        return json(res, 200, await hub.command(s.id, body.command.trim()));
+        return json(res, 200, await source.command(s.id, body.command.trim()));
       } catch (e) {
         return json(res, 400, {
           error: e instanceof Error ? e.message : String(e),
@@ -687,8 +725,9 @@ async function handleApi(req, res, remoteBroker) {
     if (method === "POST" && id) {
       if (hasRemote(remoteBroker, id)) await remoteBroker.command(id, "abort");
       else {
-        const s = await hub.ensure(id);
-        await hub.abort(s.id);
+        const source = localSource(workers, id);
+        const s = await source.ensure(id);
+        await source.abort(s.id);
       }
       return json(res, 200, { ok: true });
     }
@@ -708,7 +747,7 @@ async function handleApi(req, res, remoteBroker) {
         }
         return json(res, 200, remoteBroker.getSessionRow(id));
       }
-      return json(res, 200, await hub.setModel(id, body));
+      return json(res, 200, await localSource(workers, id).setModel(id, body));
     }
 
     // GET|POST /api/sessions/:id/scoped-models — Ctrl+P cycle allowlist (pi /scoped-models)
@@ -755,7 +794,7 @@ async function handleApi(req, res, remoteBroker) {
       if (hasRemote(remoteBroker, id)) {
         return json(res, 200, await remoteBroker.command(id, "get_thinking"));
       }
-      return json(res, 200, hub.getThinking(id));
+      return json(res, 200, localSource(workers, id).getThinking(id));
     }
     if (method === "POST" && id) {
       const body = await readJson(req);
@@ -771,7 +810,7 @@ async function handleApi(req, res, remoteBroker) {
           result,
         });
       }
-      return json(res, 200, hub.setThinking(id, body));
+      return json(res, 200, await localSource(workers, id).setThinking(id, body));
     }
 
     // POST /api/sessions/:id/compact  { instructions? }
@@ -784,14 +823,14 @@ async function handleApi(req, res, remoteBroker) {
         });
         return json(res, 202, { ok: true, id });
       }
-      return json(res, 200, await hub.compact(id, body.instructions));
+      return json(res, 200, await localSource(workers, id).compact(id, body.instructions));
     }
 
     // GET /api/sessions/:id/tree — session entry tree for /tree
     // POST /api/sessions/:id/tree  { targetId, summarize?, customInstructions? }
     id = sessionAction(pathname, "tree");
     if (method === "GET" && id) {
-      return json(res, 200, await hub.getTree(id));
+      return json(res, 200, await localSource(workers, id).getTree(id));
     }
     if (method === "POST" && id) {
       const body = await readJson(req);
@@ -812,7 +851,7 @@ async function handleApi(req, res, remoteBroker) {
     // POST /api/sessions/:id/fork  { entryId, position?: "before"|"at" }
     id = sessionAction(pathname, "fork");
     if (method === "GET" && id) {
-      return json(res, 200, await hub.getForkCandidates(id));
+      return json(res, 200, await localSource(workers, id).getForkCandidates(id));
     }
     if (method === "POST" && id) {
       const body = await readJson(req);
@@ -840,8 +879,9 @@ async function handleApi(req, res, remoteBroker) {
         });
         return json(res, 202, { ok: true, id });
       }
-      const s = await hub.ensure(id);
-      hub.steer(s.id, body.message, body.images).catch((err) => {
+      const source = localSource(workers, id);
+      const s = await source.ensure(id);
+      source.steer(s.id, body.message, body.images).catch((err) => {
         console.error("[pi-remote-web] steer error", s.id, err);
       });
       return json(res, 202, { ok: true, id: s.id });
@@ -864,8 +904,9 @@ async function handleApi(req, res, remoteBroker) {
         });
         return json(res, 200, { ok: true, id });
       }
-      const s = await hub.ensure(id);
-      await hub.followUp(s.id, body.message, body.images);
+      const source = localSource(workers, id);
+      const s = await source.ensure(id);
+      await source.followUp(s.id, body.message, body.images);
       return json(res, 200, { ok: true, id: s.id });
     }
 
@@ -876,8 +917,9 @@ async function handleApi(req, res, remoteBroker) {
       if (!body.command || typeof body.command !== "string") {
         return json(res, 400, { error: "command required" });
       }
-      const s = await hub.ensure(id);
-      hub
+      const source = localSource(workers, id);
+      const s = await source.ensure(id);
+      source
         .bash(s.id, body.command, {
           excludeFromContext: Boolean(body.excludeFromContext),
         })
@@ -890,7 +932,7 @@ async function handleApi(req, res, remoteBroker) {
     // POST /api/sessions/:id/abort-bash
     id = sessionAction(pathname, "abort-bash");
     if (method === "POST" && id) {
-      hub.abortBash(id);
+      await localSource(workers, id).abortBash(id);
       return json(res, 200, { ok: true });
     }
 
@@ -956,14 +998,14 @@ async function handleApi(req, res, remoteBroker) {
     // GET /api/sessions/:id/commands — slash commands (extension + prompt + skill)
     id = sessionAction(pathname, "commands");
     if (method === "GET" && id) {
-      return json(res, 200, await hub.getCommands(id));
+      return json(res, 200, await localSource(workers, id).getCommands(id));
     }
 
     // GET /api/sessions/:id/git — working tree status
     // GET /api/sessions/:id/git?path= — unified diff for one file
     id = sessionAction(pathname, "git");
     if (method === "GET" && id) {
-      const s = await hub.ensure(id);
+      const s = await localSource(workers, id).ensure(id);
       const file = searchParams.get("path");
       try {
         if (file) return json(res, 200, await gitFileDiff(s.cwd, file));
@@ -981,9 +1023,10 @@ async function handleApi(req, res, remoteBroker) {
     id = sessionAction(pathname, "events");
     if (method === "GET" && id) {
       const remote = hasRemote(remoteBroker, id);
-      const s = remote ? null : await hub.ensure(id);
+      const local = remote ? null : localSource(workers, id);
+      const s = remote ? null : await local.ensure(id);
       const hubId = remote ? id : s.id;
-      const source = remote ? remoteBroker : hub;
+      const source = remote ? remoteBroker : local;
       const afterSeq = lastEventIdFrom(req, searchParams);
       const { seq: headSeq, ringStart } = source.ringInfo(hubId);
       const replay = shouldReplayRing(afterSeq, ringStart);
@@ -1070,8 +1113,9 @@ async function handleApi(req, res, remoteBroker) {
         if (hasRemote(remoteBroker, id)) {
           return json(res, 200, remoteBroker.getSessionRow(id));
         }
-        const s = await hub.ensure(id);
-        return json(res, 200, hub.get(s.id));
+        const source = localSource(workers, id);
+        const s = await source.ensure(id);
+        return json(res, 200, source.get(s.id));
       }
       if (method === "PATCH") {
         const body = await readJson(req);
@@ -1083,16 +1127,18 @@ async function handleApi(req, res, remoteBroker) {
             await remoteBroker.command(id, "rename", { name: body.name });
             return json(res, 200, remoteBroker.getSessionRow(id));
           }
-          return json(res, 200, hub.setName(id, body.name));
+          return json(res, 200, await localSource(workers, id).setName(id, body.name));
         }
         return json(
           res,
           200,
-          hasRemote(remoteBroker, id) ? remoteBroker.getSessionRow(id) : hub.get(id),
+          hasRemote(remoteBroker, id)
+            ? remoteBroker.getSessionRow(id)
+            : localSource(workers, id).get(id),
         );
       }
       if (method === "DELETE") {
-        if (!hasRemote(remoteBroker, id)) await hub.close(id);
+        if (!hasRemote(remoteBroker, id) && !workers?.hasSession(id)) await hub.close(id);
         return json(res, 200, { ok: true });
       }
     }
@@ -1106,8 +1152,8 @@ async function handleApi(req, res, remoteBroker) {
     if (code === "SESSION_NOT_OPEN" || /^Session not open:/.test(message)) {
       return json(res, 404, { error: message, code: "SESSION_NOT_OPEN" });
     }
-    if (code === "SESSION_OWNED") {
-      return json(res, 409, { error: message, code: "SESSION_OWNED" });
+    if (code === "SESSION_OWNED" || code === "SESSION_BUSY") {
+      return json(res, 409, { error: message, code });
     }
     console.error("[pi-remote-web]", message);
     return json(res, 500, { error: message });
@@ -1226,13 +1272,14 @@ async function handleStatic(req, res) {
 }
 
 /**
- * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker }} opts
+ * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker; workers?: RpcWorkerManager }} opts
  * stayAlive: in-process /remote-web — close server without process.exit
  */
 export function createServer(opts = {}) {
   const port = opts.port ?? Number(process.env.PI_REMOTE_WEB_PORT || 3847);
   const stayAlive = Boolean(opts.stayAlive);
   const remoteBroker = opts.remoteBroker;
+  const workers = opts.workers;
   hostCtl.stayAlive = stayAlive;
 
   const server = http.createServer((req, res) => {
@@ -1240,7 +1287,7 @@ export function createServer(opts = {}) {
     Promise.resolve()
       .then(async () => {
         if ((req.url || "").startsWith("/api")) {
-          await handleApi(req, res, remoteBroker);
+          await handleApi(req, res, remoteBroker, workers);
         } else {
           await handleStatic(req, res);
         }
@@ -1273,11 +1320,13 @@ export function createServer(opts = {}) {
       });
       return server;
     },
-    close() {
-      hub.disposeAll();
-      return new Promise((resolve, reject) => {
+    async close() {
+      const closed = new Promise((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve(undefined)));
       });
+      await Promise.allSettled([hub.disposeAll(), workers?.closeAll()]);
+      server.closeAllConnections?.();
+      return closed;
     },
   };
   hostCtl.close = () => api.close();

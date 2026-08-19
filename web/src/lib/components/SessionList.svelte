@@ -494,6 +494,11 @@
                               class="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase tracking-wide {s.remote && !s.connected ? 'text-muted-foreground' : 'text-sky-600 dark:text-sky-400'}"
                               title={s.remote && !s.connected ? "Terminal reconnecting" : "Attached from pi TUI"}
                             >{s.remote && !s.connected ? "offline" : "tui"}</span>
+                          {:else if s.browserOwned}
+                            <span
+                              class="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase tracking-wide text-violet-600 dark:text-violet-400"
+                              title="Browser-owned isolated Pi worker"
+                            >browser</span>
                           {/if}
                         </div>
                       </button>

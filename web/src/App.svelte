@@ -4,6 +4,7 @@
     listSessions,
     openSession,
     closeSession,
+    releaseSession,
     patchSession,
     compactSession,
     getMessages,
@@ -101,6 +102,7 @@
   let defaultCwd = $state("");
   /** Prevent double-click open storms */
   let opening = false;
+  let releasing = $state(false);
 
   $effect(() => {
     void loadAndApplyCustomization(selected?.cwd).catch(() => {});
@@ -281,6 +283,21 @@
     upsertSession(row);
     setSessionUrl(row.id);
     return row;
+  }
+
+  async function releaseToTerminal() {
+    if (!selected?.browserOwned || releasing) return;
+    releasing = true;
+    err = null;
+    try {
+      await releaseSession(selected.id);
+      selected = { ...selected, running: false, browserOwned: false, owner: "offline" };
+      await refresh();
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    } finally {
+      releasing = false;
+    }
   }
 
   function onTerminalSwitch(previous: Partial<SessionRow>) {
@@ -727,6 +744,20 @@
             Dismiss
           </button>
         </div>
+      </div>
+    {/if}
+    {#if selected?.browserOwned}
+      <div class="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-2 text-xs">
+        <span>This session is owned by the browser worker.</span>
+        <button
+          type="button"
+          class="ml-auto rounded border border-border px-2 py-1 hover:bg-muted disabled:opacity-50"
+          disabled={releasing}
+          title={selected.busy ? "Wait for the current turn to finish" : "Stop the worker and allow terminal resume"}
+          onclick={releaseToTerminal}
+        >
+          {releasing ? "Releasing…" : "Release to terminal"}
+        </button>
       </div>
     {/if}
     <ChatPanel
