@@ -3,31 +3,66 @@
  * Persistent daemon: node server/cli.js [--port 3847]
  */
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createServer } from "./http.js";
 import { RemoteBroker } from "./remote-broker.js";
 import { RpcWorkerManager } from "./rpc-workers.js";
 import { WorktreeManager } from "./worktrees.js";
 import { AuthManager } from "./auth.js";
+import {
+  controlService,
+  doctorService,
+  installService,
+  readServiceLogs,
+  serviceConfig,
+  serviceStatus,
+  uninstallService,
+} from "./service.js";
 
 const args = process.argv.slice(2);
 let port = Number(process.env.PI_REMOTE_WEB_PORT || 3847);
 const i = args.indexOf("--port");
 if (i >= 0 && args[i + 1]) port = Number(args[i + 1]);
 
+const serviceCommand = args[0];
+if (["install", "uninstall", "start", "stop", "restart", "status", "doctor", "logs"].includes(serviceCommand)) {
+  if (serviceCommand === "install") {
+    const config = await installService({ port, publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL });
+    console.log(`[pi-remote-web] installed ${config.plistPath}`);
+  } else if (serviceCommand === "uninstall") {
+    const config = await uninstallService();
+    console.log(`[pi-remote-web] uninstalled ${config.plistPath}`);
+  } else if (["start", "stop", "restart"].includes(serviceCommand)) {
+    await controlService(serviceCommand);
+    console.log(`[pi-remote-web] ${serviceCommand} requested`);
+  } else if (serviceCommand === "status") {
+    console.log(JSON.stringify(await serviceStatus(), null, 2));
+  } else if (serviceCommand === "doctor") {
+    const report = await doctorService();
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.ok) process.exitCode = 1;
+  } else {
+    const logs = await readServiceLogs();
+    process.stdout.write(`== stdout ==\n${logs.stdout}\n== stderr ==\n${logs.stderr}\n`);
+  }
+  process.exit();
+}
+
 const auth = await new AuthManager({
   port,
   publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL,
 }).init();
 
-if (args[0] === "pair") {
+if (serviceCommand === "pair") {
   if (!auth.publicUrl) throw new Error("Set PI_REMOTE_WEB_PUBLIC_URL to the HTTPS Tailscale Serve URL before pairing");
   const token = await auth.issuePairingToken();
   console.log(auth.pairingUrl(token));
   process.exit(0);
 }
 
-if (args[0] === "revoke-all") {
+if (serviceCommand === "revoke-all") {
   await auth.rotateSigningSecret();
   console.log("[pi-remote-web] revoked all browser sessions");
   process.exit(0);
@@ -54,16 +89,47 @@ const app = createServer({
 });
 app.listen();
 
-// Last-resort log; static/API handlers must not throw uncaught (see http.js sendFile).
-process.on("uncaughtException", (err) => {
-  console.error("[pi-remote-web] uncaughtException", err?.message || err);
-});
-process.on("unhandledRejection", (err) => {
-  console.error("[pi-remote-web] unhandledRejection", err);
-});
+const service = serviceConfig({ port, publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL });
+let statusTimer;
+async function writeStatus() {
+  await mkdir(service.stateDir, { recursive: true, mode: 0o700 });
+  const terminalSessions = broker.listSessions().filter((session) => session.connected).length;
+  const browserSessions = workers.listSessions().filter((row) => row.running).length;
+  const temporary = `${service.statusPath}.${randomBytes(8).toString("hex")}`;
+  await writeFile(temporary, JSON.stringify({
+    pid: process.pid,
+    port,
+    publicUrl: auth.publicUrl?.href ?? null,
+    socketPath,
+    terminalSessions,
+    browserSessions,
+    liveSessions: terminalSessions + browserSessions,
+    updatedAt: new Date().toISOString(),
+  }), { flag: "wx", mode: 0o600 });
+  await rename(temporary, service.statusPath);
+}
+await writeStatus().catch(() => {});
+statusTimer = setInterval(() => void writeStatus().catch(() => {}), 5_000);
+statusTimer.unref?.();
+
+// Fatal errors must exit nonzero so launchd KeepAlive can restart a broken daemon.
+let exiting = false;
+async function fatal(label, err) {
+  console.error(`[pi-remote-web] ${label}`, err?.stack || err?.message || err);
+  if (exiting) return;
+  exiting = true;
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 5_000);
+  await close().catch(() => {});
+  process.exit(1);
+}
+process.on("uncaughtException", (err) => void fatal("uncaughtException", err));
+process.on("unhandledRejection", (err) => void fatal("unhandledRejection", err));
 
 async function close() {
+  if (statusTimer) clearInterval(statusTimer);
   await Promise.allSettled([app.close(), broker.close()]);
+  await rm(service.statusPath, { force: true }).catch(() => {});
 }
 
 process.on("SIGINT", async () => {

@@ -69,6 +69,23 @@ pi-remote-web revoke-all  # invalidate every paired browser
 
 The pairing credential is carried only in the generated URL fragment. Models, provider auth, skills, and extensions still come from pi.
 
+## macOS service
+
+```bash
+pi-remote-web install      # install and start the per-user LaunchAgent
+pi-remote-web status       # health, URLs, socket, and live-session counts
+pi-remote-web doctor       # permissions, locks, binaries, launchd, and Tailscale
+pi-remote-web logs         # recent bounded daemon logs
+pi-remote-web pair         # print a five-minute single-use pairing URL
+pi-remote-web revoke-all   # invalidate every paired browser
+pi-remote-web restart
+pi-remote-web uninstall
+```
+
+The LaunchAgent runs `caffeinate -s` and remains loopback-only. Set
+`PI_REMOTE_WEB_PUBLIC_URL` to the separate Tailscale Serve HTTPS URL before
+installing or pairing. These commands never configure Tailscale or modify HAPI.
+
 ## License
 
 [MIT](./LICENSE)
