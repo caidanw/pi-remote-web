@@ -6,6 +6,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pi Remote Web</title>
     <script>
+      // This origin previously hosted another app; drop its service worker and caches.
+      (function () {
+        try {
+          if (navigator.serviceWorker) {
+            navigator.serviceWorker.getRegistrations().then(function (list) {
+              list.forEach(function (registration) {
+                registration.unregister();
+              });
+            });
+          }
+          if (window.caches) {
+            caches.keys().then(function (keys) {
+              keys.forEach(function (key) {
+                caches.delete(key);
+              });
+            });
+          }
+        } catch (e) {}
+      })();
       (function () {
         try {
           var k = "agentic-ui-kit-theme";
