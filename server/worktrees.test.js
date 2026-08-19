@@ -303,7 +303,7 @@ describe("Git worktrees", () => {
         return { id: `session-${calls.length}`, cwd: options.cwd, running: true };
       },
     };
-    const app = createServer({ port: 0, workers, worktrees: fakeWorktrees });
+    const app = createServer({ port: 0, workers, worktrees: fakeWorktrees, auth: false });
     apps.push(app);
     await new Promise((resolve) => app.listen(resolve));
     const port = app.server.address().port;

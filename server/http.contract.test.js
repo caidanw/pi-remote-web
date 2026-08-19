@@ -100,6 +100,7 @@ describe("HTTP wire contract", () => {
     process.env.PI_REMOTE_WEB_LOCK_DIR = `${cwd}/locks`;
     app = createServer({
       port: 0,
+      auth: false,
       remoteBroker: {
         listSessions: () => [
           {
@@ -592,6 +593,6 @@ describe("HTTP wire contract", () => {
   it("OPTIONS allows CORS preflight", async () => {
     const res = await fetch(`${base}/api/health`, { method: "OPTIONS" });
     assert.equal(res.status, 204);
-    assert.equal(res.headers.get("access-control-allow-origin"), "*");
+    assert.equal(res.headers.get("access-control-allow-headers"), "Content-Type, X-CSRF-Token");
   });
 });

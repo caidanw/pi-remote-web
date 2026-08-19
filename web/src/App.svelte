@@ -10,6 +10,8 @@
     getMessages,
     getSession,
     getHealth,
+    getAuthStatus,
+    exchangePairingToken,
     getTree,
     navigateTree,
     forkSession,
@@ -30,6 +32,7 @@
   import SkillWorkspaceDialog from "$lib/components/SkillWorkspaceDialog.svelte";
   import WorktreeDialog from "$lib/components/WorktreeDialog.svelte";
   import { loadAndApplyCustomization } from "$lib/customization";
+  import { runAuthenticatedStartup } from "$lib/auth-bootstrap";
   const SIDEBAR_KEY = "pi-remote-web-sidebar-open";
   const GIT_SIDEBAR_KEY = "pi-remote-web-git-sidebar-open";
 
@@ -38,6 +41,9 @@
   /** First successful (or failed) /api/sessions fetch — never re-block the sidebar. */
   let listReady = $state(false);
   let err = $state<string | null>(null);
+  let authReady = $state(false);
+  let authRequired = $state(false);
+  let pairingError = $state("");
   let sidebarOpen = $state(
     (() => {
       try {
@@ -107,6 +113,7 @@
   let releasing = $state(false);
 
   $effect(() => {
+    if (!authReady || authRequired) return;
     void loadAndApplyCustomization(selected?.cwd).catch(() => {});
   });
   /** Apply /sessions/:id once after first list load */
@@ -672,28 +679,58 @@
     const onPop = () => {
       void routeFromUrl();
     };
+    const onAuthRequired = () => {
+      authRequired = true;
+      authReady = true;
+    };
     window.addEventListener("popstate", onPop);
+    window.addEventListener("pi-remote-web:auth-required", onAuthRequired);
 
     void (async () => {
-      await refresh();
-      if (!routedOnce) {
-        routedOnce = true;
-        await routeFromUrl();
-      }
       try {
-        const h = await getHealth();
-        if (h.cwd) defaultCwd = h.cwd;
-      } catch {
-        /* ignore */
+        const authenticated = await runAuthenticatedStartup(
+          async () => {
+            const fragment = new URLSearchParams(location.hash.replace(/^#/, ""));
+            const token = fragment.get("pair");
+            const status = token
+              ? await exchangePairingToken(token)
+              : await getAuthStatus();
+            if (token) history.replaceState(null, "", location.pathname + location.search);
+            return status.authenticated;
+          },
+          async () => {
+            await refresh();
+            if (!routedOnce) {
+              routedOnce = true;
+              await routeFromUrl();
+            }
+            try {
+              const h = await getHealth();
+              if (h.cwd) defaultCwd = h.cwd;
+            } catch {
+              /* ignore */
+            }
+          },
+        );
+        authRequired = !authenticated;
+        if (!authenticated) listReady = true;
+      } catch (e) {
+        pairingError = e instanceof Error ? e.message : String(e);
+        authRequired = true;
+        listReady = true;
+        if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+      } finally {
+        authReady = true;
       }
     })();
 
     const t = setInterval(() => {
-      if (document.visibilityState === "visible") refresh();
+      if (!authRequired && document.visibilityState === "visible") refresh();
     }, 60_000);
     return () => {
       clearInterval(t);
       window.removeEventListener("popstate", onPop);
+      window.removeEventListener("pi-remote-web:auth-required", onAuthRequired);
     };
   });
 </script>
@@ -863,4 +900,23 @@
     onCancel={cancelTreeNavigation}
     onNavigate={confirmTreeNavigation}
   />
+{/if}
+
+{#if !authReady || authRequired}
+  <div class="fixed inset-0 z-[100] flex items-center justify-center bg-background p-6">
+    <main class="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-6 text-center shadow-xl">
+      <img src="/favicon.svg" alt="" width="40" height="40" class="mx-auto size-10 rounded-lg" />
+      <div>
+        <h1 class="text-lg font-semibold">{authReady ? "Pair this browser" : "Checking authentication"}</h1>
+        <p class="mt-2 text-sm text-muted-foreground">
+          {authReady
+            ? "Run pi-remote-web pair on the Mac, then open the generated HTTPS link."
+            : "Please wait…"}
+        </p>
+      </div>
+      {#if pairingError}
+        <p class="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">{pairingError}</p>
+      {/if}
+    </main>
+  </div>
 {/if}

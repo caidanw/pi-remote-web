@@ -12,6 +12,7 @@ import {
 import { spawn } from "node:child_process";
 import { createServer } from "../server/http.js";
 import { hub } from "../server/hub.js";
+import { AuthManager } from "../server/auth.js";
 
 /**
  * Index live AgentSession by id. Must patch the same AgentSession class pi uses,
@@ -61,6 +62,7 @@ function getSessionById(id: string) {
 
 /** @type {ReturnType<typeof createServer> | null} */
 let app: ReturnType<typeof createServer> | null = null;
+let appAuth: AuthManager | null = null;
 
 const DEFAULT_PORT = Number(process.env.PI_REMOTE_WEB_PORT || 3847);
 
@@ -183,7 +185,12 @@ async function startServer(port: number): Promise<void> {
   if (app) return;
   if (await isUp(port)) return;
 
-  const next = createServer({ port, stayAlive: true });
+  const auth = await new AuthManager({
+    port,
+    publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL,
+    allowHttpLoopback: true,
+  }).init();
+  const next = createServer({ port, stayAlive: true, auth });
   await new Promise<void>((resolve, reject) => {
     const onErr = (err: Error) => {
       next.server.off("error", onErr);
@@ -196,6 +203,7 @@ async function startServer(port: number): Promise<void> {
     });
   });
   app = next;
+  appAuth = auth;
 }
 
 /**
@@ -231,6 +239,7 @@ async function stopServer(port: number): Promise<"stopped" | "not_running"> {
     detachLive();
     const cur = app;
     app = null;
+    appAuth = null;
     try {
       await cur.close();
     } catch {
@@ -243,7 +252,25 @@ async function stopServer(port: number): Promise<"stopped" | "not_running"> {
 
   // Existing compatible host from another Pi process — ask it to close
   try {
-    await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: "POST" });
+    const base = `http://127.0.0.1:${port}`;
+    const auth = await new AuthManager({
+      port,
+      publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL,
+      allowHttpLoopback: true,
+    }).init();
+    const token = await auth.issuePairingToken();
+    const paired = await fetch(`${base}/api/auth/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: base },
+      body: JSON.stringify({ token }),
+    });
+    const cookie = paired.headers.get("set-cookie")?.split(";", 1)[0];
+    const { csrf } = await paired.json() as { csrf?: string };
+    if (!paired.ok || !cookie || !csrf) throw new Error("local pairing failed");
+    await fetch(`${base}/api/shutdown`, {
+      method: "POST",
+      headers: { Origin: base, Cookie: cookie, "X-CSRF-Token": csrf },
+    });
   } catch {
     /* process exits mid-response — expected */
   }
@@ -288,7 +315,8 @@ export default function (pi: ExtensionAPI) {
 
         // Current session, or explicit /remote-web <sessionId> / /remote-web open <id>
         const { id, live } = await resolveSessionInHub(sessionRef, ctx);
-        const url = `${base}/sessions/${encodeURIComponent(id)}`;
+        const token = await appAuth?.issuePairingToken();
+        const url = `${base}/sessions/${encodeURIComponent(id)}${token ? `#pair=${encodeURIComponent(token)}` : ""}`;
         ctx.ui.notify(
           live ? `pi-remote-web: ${url} (live)` : `pi-remote-web: ${url}`,
           "info",

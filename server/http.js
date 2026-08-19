@@ -21,10 +21,16 @@ import {
  * @type {{ stayAlive: boolean, close: null | (() => Promise<unknown>) }}
  */
 const hostCtl = { stayAlive: false, close: null };
+const AUTH_BODY_MAX = 4 * 1024;
+const CONTROL_BODY_MAX = 64 * 1024;
+const SESSION_BODY_MAX = 16 * 1024 * 1024;
+const PROMPT_BODY_MAX = 88 * 1024 * 1024;
+const DEFAULT_BODY_IDLE_TIMEOUT_MS = 10_000;
 
 /** @typedef {import("./remote-broker.js").RemoteBroker} RemoteBroker */
 /** @typedef {import("./rpc-workers.js").RpcWorkerManager} RpcWorkerManager */
 /** @typedef {import("./worktrees.js").WorktreeManager} WorktreeManager */
+/** @typedef {import("./auth.js").AuthManager} AuthManager */
 
 function remoteRow(broker, session) {
   if (typeof broker?.getSessionRow === "function") {
@@ -91,6 +97,43 @@ const REMOTE_UNSUPPORTED_ACTIONS = new Set([
 /** @param {unknown} images */
 function hasImages(images) {
   return Array.isArray(images) && images.length > 0;
+}
+
+function isBase64(value) {
+  if (!value || value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  for (let index = 0; index < value.length - padding; index += 1) {
+    const code = value.charCodeAt(index);
+    if (!(
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code === 43 ||
+      code === 47
+    )) return false;
+  }
+  return true;
+}
+
+function validatePromptImages(images) {
+  if (images == null) return;
+  if (!Array.isArray(images) || images.length > 8) {
+    throw Object.assign(new Error("At most 8 image attachments are allowed"), { status: 400 });
+  }
+  for (const image of images) {
+    if (
+      image?.type !== "image" ||
+      typeof image.data !== "string" ||
+      !image.data ||
+      typeof image.mimeType !== "string" ||
+      !image.mimeType.startsWith("image/") ||
+      image.data.length > 11_184_812 ||
+      !isBase64(image.data) ||
+      Buffer.from(image.data, "base64").length > 8 * 1024 * 1024
+    ) {
+      throw Object.assign(new Error("Invalid image attachment (max 8 MiB each)"), { status: 400 });
+    }
+  }
 }
 
 /**
@@ -299,12 +342,42 @@ const MIME = {
 /**
  * @param {http.IncomingMessage} req
  */
-async function readJson(req) {
+async function readJson(req, limit = CONTROL_BODY_MAX) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
+  let size = 0;
+  const iterator = req[Symbol.asyncIterator]();
+  while (true) {
+    let timer;
+    const next = await Promise.race([
+      iterator.next(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error("Request body timed out"), {
+          code: "REQUEST_TIMEOUT",
+          status: 408,
+        })), req.piBodyIdleTimeoutMs ?? DEFAULT_BODY_IDLE_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (next.done) break;
+    const c = next.value;
+    size += c.length;
+    if (size > limit) {
+      throw Object.assign(new Error("Request body too large"), {
+        code: "PAYLOAD_TOO_LARGE",
+        status: 413,
+      });
+    }
+    chunks.push(c);
+  }
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw) return {};
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw Object.assign(new Error("Invalid JSON"), {
+      code: "INVALID_JSON",
+      status: 400,
+    });
+  }
 }
 
 /**
@@ -325,7 +398,6 @@ function json(res, status, body) {
   const data = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
   });
   res.end(data);
 }
@@ -340,7 +412,6 @@ function text(res, status, msg = "") {
   if (!res.headersSent) {
     res.writeHead(status, {
       "Content-Type": "text/plain; charset=utf-8",
-      "Access-Control-Allow-Origin": "*",
     });
   }
   res.end(msg);
@@ -418,30 +489,94 @@ function localSource(workers, id) {
  * @param {RemoteBroker | undefined} remoteBroker
  * @param {RpcWorkerManager | undefined} workers
  * @param {WorktreeManager | undefined} worktrees
+ * @param {AuthManager | false} auth
  */
-async function handleApi(req, res, remoteBroker, workers, worktrees) {
+async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
   const { pathname, searchParams } = parsePath(req.url || "/");
   const method = req.method || "GET";
 
-  if (method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    });
-    res.end();
-    return;
-  }
-
   try {
+    if (auth) {
+      auth.validateHostOrigin(req, {
+        requireOrigin: method === "OPTIONS" || !["GET", "HEAD"].includes(method),
+      });
+    }
+
+    if (method === "OPTIONS") {
+      res.writeHead(204, {
+        ...(auth && req.headers.origin
+          ? {
+              "Access-Control-Allow-Origin": req.headers.origin,
+              "Access-Control-Allow-Credentials": "true",
+              Vary: "Origin",
+            }
+          : {}),
+        "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token",
+      });
+      res.end();
+      return;
+    }
+
+    if (!auth && method === "GET" && pathname === "/api/auth/status") {
+      res.setHeader("Cache-Control", "no-store");
+      return json(res, 200, { authenticated: true, development: true });
+    }
+
+    if (auth && method === "GET" && pathname === "/api/auth/status") {
+      res.setHeader("Cache-Control", "no-store");
+      const session = await auth.sessionFromRequest(req);
+      return json(
+        res,
+        200,
+        session
+          ? { authenticated: true, csrf: session.csrf, expiresAt: session.exp }
+          : { authenticated: false },
+      );
+    }
+
+    if (auth && method === "POST" && pathname === "/api/auth/exchange") {
+      if (searchParams.has("token")) {
+        return json(res, 400, {
+          error: "Pairing tokens are accepted only in the request body",
+          code: "PAIRING_QUERY_REJECTED",
+        });
+      }
+      const body = await readJson(req, AUTH_BODY_MAX);
+      const session = await auth.exchangePairingToken(body.token);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Set-Cookie", auth.cookieHeader(session.cookie));
+      return json(res, 200, {
+        authenticated: true,
+        csrf: session.csrf,
+        expiresAt: session.expiresAt,
+      });
+    }
+
+    const isPublic = pathname === "/api/health";
+    if (auth && !isPublic) {
+      res.setHeader("Cache-Control", "no-store");
+      await auth.requireSession(req, {
+        csrf: !["GET", "HEAD"].includes(method),
+      });
+    }
+
+    if (auth && method === "POST" && pathname === "/api/auth/logout") {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Set-Cookie", auth.clearCookieHeader());
+      return json(res, 200, { ok: true });
+    }
+
     // GET /api/health
     if (method === "GET" && pathname === "/api/health") {
-      return json(res, 200, {
-        ok: true,
-        open: hub.listOpen().length + (workers?.listSessions().filter((s) => s.running).length ?? 0),
-        remote: remoteBroker?.listSessions().length ?? 0,
-        cwd: process.cwd(),
-      });
+      return json(res, 200, auth
+        ? { ok: true }
+        : {
+            ok: true,
+            open: hub.listOpen().length + (workers?.listSessions().filter((s) => s.running).length ?? 0),
+            remote: remoteBroker?.listSessions().length ?? 0,
+            cwd: process.cwd(),
+          });
     }
 
     // POST /api/shutdown — stop the HTTP host without exiting Pi
@@ -506,7 +641,6 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
       if (!stream) return text(res, 404, "Not found");
       res.writeHead(200, {
         "Content-Type": MIME[path.extname(searchParams.get("path") || "")] || "application/octet-stream",
-        "Access-Control-Allow-Origin": "*",
       });
       stream.pipe(res);
       return;
@@ -550,7 +684,8 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
 
     remoteId = remoteSessionAction(pathname, "prompt");
     if (method === "POST" && remoteId && remoteBroker) {
-      const body = await readJson(req);
+      const body = await readJson(req, PROMPT_BODY_MAX);
+      validatePromptImages(body.images);
       if (typeof body.message !== "string" || !body.message.trim()) {
         return json(res, 400, { error: "message required" });
       }
@@ -574,10 +709,9 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
       req.socket?.setTimeout(0);
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
+        "Cache-Control": "no-store, no-transform",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
-        "Access-Control-Allow-Origin": "*",
       });
       res.write(
         `data: ${JSON.stringify(
@@ -690,7 +824,7 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
 
     // POST /api/sessions  { path?, cwd?, fresh?, content?, filename? }
     if (method === "POST" && pathname === "/api/sessions") {
-      const body = await readJson(req);
+      const body = await readJson(req, SESSION_BODY_MAX);
       const remoteId = body.path && remoteBroker?.findByPath?.(body.path);
       if (remoteId) return json(res, 200, remoteBroker.getSessionRow(remoteId));
       const opened = workers && body.content == null
@@ -748,7 +882,8 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
     // POST /api/sessions/:id/prompt  { message, images? }
     id = sessionAction(pathname, "prompt");
     if (method === "POST" && id) {
-      const body = await readJson(req);
+      const body = await readJson(req, PROMPT_BODY_MAX);
+      validatePromptImages(body.images);
       if (typeof body.message !== "string") {
         return json(res, 400, { error: "message required" });
       }
@@ -934,7 +1069,8 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
     // POST /api/sessions/:id/steer  { message, images? }
     id = sessionAction(pathname, "steer");
     if (method === "POST" && id) {
-      const body = await readJson(req);
+      const body = await readJson(req, PROMPT_BODY_MAX);
+      validatePromptImages(body.images);
       if (typeof body.message !== "string") {
         return json(res, 400, { error: "message required" });
       }
@@ -959,7 +1095,8 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
     // POST /api/sessions/:id/follow-up  { message, images? }
     id = sessionAction(pathname, "follow-up");
     if (method === "POST" && id) {
-      const body = await readJson(req);
+      const body = await readJson(req, PROMPT_BODY_MAX);
+      validatePromptImages(body.images);
       if (typeof body.message !== "string") {
         return json(res, 400, { error: "message required" });
       }
@@ -1103,10 +1240,9 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
       req.socket?.setTimeout(0);
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
+        "Cache-Control": "no-store, no-transform",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
-        "Access-Control-Allow-Origin": "*",
       });
       // No id: — must not advance browser Last-Event-ID past ring
       res.write(
@@ -1225,6 +1361,16 @@ async function handleApi(req, res, remoteBroker, workers, worktrees) {
     if (code === "SESSION_OWNED" || code === "SESSION_BUSY") {
       return json(res, 409, { error: message, code });
     }
+    if (code && /^(AUTH|CSRF|HOST|ORIGIN|PAIRING)_/.test(String(code))) {
+      return json(res, Number(err.status) || 401, { error: message, code });
+    }
+    if (Number(err?.status)) {
+      if (Number(err.status) === 408) {
+        res.shouldKeepAlive = false;
+        res.setHeader("Connection", "close");
+      }
+      return json(res, Number(err.status), { error: message, code });
+    }
     console.error("[pi-remote-web]", message);
     return json(res, 500, { error: message });
   }
@@ -1342,38 +1488,55 @@ async function handleStatic(req, res) {
 }
 
 /**
- * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker; workers?: RpcWorkerManager; worktrees?: WorktreeManager }} opts
+ * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker; workers?: RpcWorkerManager; worktrees?: WorktreeManager; auth: AuthManager | false; bodyIdleTimeoutMs?: number; requestTimeoutMs?: number; headersTimeoutMs?: number; socketTimeoutMs?: number }} opts
  * stayAlive: in-process /remote-web — close server without process.exit
  */
 export function createServer(opts = {}) {
+  if (!("auth" in opts)) {
+    throw new Error("createServer requires auth; pass false only from explicit tests or development seams");
+  }
   const port = opts.port ?? Number(process.env.PI_REMOTE_WEB_PORT || 3847);
   const stayAlive = Boolean(opts.stayAlive);
   const remoteBroker = opts.remoteBroker;
   const workers = opts.workers;
   const worktrees = opts.worktrees;
+  const auth = opts.auth;
+  const bodyIdleTimeoutMs = opts.bodyIdleTimeoutMs ?? DEFAULT_BODY_IDLE_TIMEOUT_MS;
   hostCtl.stayAlive = stayAlive;
 
   const server = http.createServer((req, res) => {
+    req.piBodyIdleTimeoutMs = bodyIdleTimeoutMs;
     // Never let a handler kill the process
     Promise.resolve()
       .then(async () => {
         if ((req.url || "").startsWith("/api")) {
-          await handleApi(req, res, remoteBroker, workers, worktrees);
+          await handleApi(req, res, remoteBroker, workers, worktrees, auth);
         } else {
+          if (auth) auth.validateHostOrigin(req);
           await handleStatic(req, res);
         }
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
-        console.error("[pi-remote-web] request error", message);
-        json(res, 500, { error: message });
+        const status = Number(err?.status) || 500;
+        if (status >= 500) console.error("[pi-remote-web] request error", message);
+        json(res, status, { error: message, ...(err?.code ? { code: err.code } : {}) });
       });
   });
 
-  // Node default requestTimeout is 300_000 (5 min) — kills long-lived SSE.
-  // Localhost GUI only; disable so /events stays open.
-  server.requestTimeout = 0;
-  server.headersTimeout = 0;
+  server.on("upgrade", (req, socket) => {
+    try {
+      if (auth) auth.validateHostOrigin(req, { requireOrigin: true });
+      socket.end("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n");
+    } catch {
+      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    }
+  });
+
+  // Keep request/header parsing bounded. Established SSE sockets disable their own idle timeout.
+  server.requestTimeout = opts.requestTimeoutMs ?? 30_000;
+  server.headersTimeout = opts.headersTimeoutMs ?? 15_000;
+  server.timeout = opts.socketTimeoutMs ?? 30_000;
 
   server.on("error", (err) => {
     console.error("[pi-remote-web] server error", err.message);

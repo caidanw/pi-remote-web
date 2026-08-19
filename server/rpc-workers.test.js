@@ -223,7 +223,7 @@ describe("browser-owned Pi RPC workers", () => {
 
   it("routes create and release through the existing HTTP session contract", async () => {
     const { root, manager } = await fixture();
-    const app = createServer({ port: 0, workers: manager });
+    const app = createServer({ port: 0, workers: manager, auth: false });
     await new Promise((resolve) => app.listen(resolve));
     cleanups.push(() => app.close());
     const address = app.server.address();

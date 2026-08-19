@@ -57,9 +57,17 @@ Localhost only (`127.0.0.1`). No auth — treat it like the TUI on your machine.
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `PI_REMOTE_WEB_PORT` | `3847` | HTTP port |
+| `PI_REMOTE_WEB_PUBLIC_URL` | — | HTTPS Tailscale Serve URL accepted for pairing and Host/Origin checks |
 | `PI_REMOTE_WEB_SESSION_IDLE_MS` | `86400000` (1 day) | Close hub session when no SSE clients (`0` disables) |
 
-Models, auth, skills, and extensions come from pi — this package does not add a second config system.
+Pair a browser after configuring the public HTTPS URL:
+
+```bash
+PI_REMOTE_WEB_PUBLIC_URL=https://your-mac.your-tailnet.ts.net pi-remote-web pair
+pi-remote-web revoke-all  # invalidate every paired browser
+```
+
+The pairing credential is carried only in the generated URL fragment. Models, provider auth, skills, and extensions still come from pi.
 
 ## License
 

@@ -484,7 +484,7 @@ describe("SessionHub attach (bound / live)", () => {
 describe("createServer stayAlive", () => {
   it("in-process listen and close without exit", async () => {
     const { createServer } = await import("./http.js");
-    const app = createServer({ port: 0, stayAlive: true });
+    const app = createServer({ port: 0, stayAlive: true, auth: false });
     await new Promise((resolve, reject) => {
       app.server.once("error", reject);
       app.listen(() => resolve(undefined));

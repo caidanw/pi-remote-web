@@ -1,5 +1,27 @@
 /** Thin fetch client for pi-remote-web server. */
 
+let csrfToken = "";
+
+export async function getAuthStatus() {
+  const status = await req<{ authenticated: boolean; csrf?: string; expiresAt?: number }>("/api/auth/status");
+  csrfToken = status.csrf || "";
+  return status;
+}
+
+export async function exchangePairingToken(token: string) {
+  const status = await req<{ authenticated: true; csrf: string; expiresAt: number }>(
+    "/api/auth/exchange",
+    { method: "POST", body: JSON.stringify({ token }) },
+  );
+  csrfToken = status.csrf;
+  return status;
+}
+
+export async function logoutBrowser() {
+  await req<{ ok: true }>("/api/auth/logout", { method: "POST" });
+  csrfToken = "";
+}
+
 export type SessionRow = {
   id: string;
   path?: string;
@@ -194,10 +216,15 @@ export function listFs(path?: string) {
 async function req<T>(path: string, init?: RequestInit, attempt = 0): Promise<T> {
   let res: Response;
   try {
+    const method = (init?.method || "GET").toUpperCase();
     res = await fetch(path, {
       ...init,
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
+        ...(csrfToken && method !== "GET" && method !== "HEAD"
+          ? { "X-CSRF-Token": csrfToken }
+          : {}),
         ...(init?.headers || {}),
       },
     });
@@ -220,6 +247,10 @@ async function req<T>(path: string, init?: RequestInit, attempt = 0): Promise<T>
       code?: string;
     };
     const msg = body.error || res.statusText;
+    if (res.status === 401 && typeof window !== "undefined") {
+      csrfToken = "";
+      window.dispatchEvent(new CustomEvent("pi-remote-web:auth-required"));
+    }
     const err = new Error(msg) as Error & { code?: string; status?: number };
     err.code = body.code;
     err.status = res.status;
