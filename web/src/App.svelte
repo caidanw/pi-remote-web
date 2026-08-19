@@ -28,8 +28,8 @@
   import TreeNavigateDialog from "$lib/components/TreeNavigateDialog.svelte";
   import SkillWorkspaceDialog from "$lib/components/SkillWorkspaceDialog.svelte";
   import { loadAndApplyCustomization } from "$lib/customization";
-  const SIDEBAR_KEY = "pi-gui-sidebar-open";
-  const GIT_SIDEBAR_KEY = "pi-gui-git-sidebar-open";
+  const SIDEBAR_KEY = "pi-remote-web-sidebar-open";
+  const GIT_SIDEBAR_KEY = "pi-remote-web-git-sidebar-open";
 
   let sessions = $state<SessionRow[]>([]);
   let selected = $state<SessionRow | undefined>(undefined);

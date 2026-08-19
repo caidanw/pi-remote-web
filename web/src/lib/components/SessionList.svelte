@@ -44,11 +44,11 @@
   /** Folder keys the user collapsed. Absent = open (default expanded). */
   let collapsed = $state(new Set<string>());
 
-  const FOLDER_ORDER_KEY = "pi-gui-sidebar-folder-order";
-  const SESSION_ORDER_KEY = "pi-gui-sidebar-session-order";
+  const FOLDER_ORDER_KEY = "pi-remote-web-sidebar-folder-order";
+  const SESSION_ORDER_KEY = "pi-remote-web-sidebar-session-order";
   /** Demoted from Active → Recent (not hidden). Legacy key name kept. */
-  const ARCHIVED_KEY = "pi-gui-sidebar-archived";
-  const WIDTH_KEY = "pi-gui-sidebar-width";
+  const ARCHIVED_KEY = "pi-remote-web-sidebar-archived";
+  const WIDTH_KEY = "pi-remote-web-sidebar-width";
   const WIDTH_MIN = 200;
   const WIDTH_MAX = 480;
   const WIDTH_DEFAULT = 360;
@@ -80,8 +80,8 @@
       const n = (event as CustomEvent<{ appearance?: { sidebarWidth?: number } }>).detail?.appearance?.sidebarWidth;
       if (typeof n === "number") width = clampWidth(n);
     };
-    window.addEventListener("pi-gui:customization", update);
-    return () => window.removeEventListener("pi-gui:customization", update);
+    window.addEventListener("pi-remote-web:customization", update);
+    return () => window.removeEventListener("pi-remote-web:customization", update);
   });
 
   function onResizePointerDown(e: PointerEvent) {
@@ -357,7 +357,7 @@
   >
     <div class="flex min-w-0 items-center gap-2">
       <img src="/favicon.svg" alt="" width="22" height="22" class="size-[22px] shrink-0 rounded-[5px]" />
-      <div class="min-w-0 whitespace-nowrap text-sm font-semibold tracking-tight">pi-gui</div>
+      <div class="min-w-0 whitespace-nowrap text-sm font-semibold tracking-tight">Pi Remote Web</div>
     </div>
     <div class="flex shrink-0 items-center gap-0.5">
       <SoundToggle />

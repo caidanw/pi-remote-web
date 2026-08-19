@@ -1,1 +1,1 @@
-export { default } from "./extensions/gui.ts";
+export { default } from "./extensions/web.ts";

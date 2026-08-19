@@ -1,15 +1,17 @@
-# pi-gui-extension
+# Pi Remote Web
 
-Pi extension for a localhost multi-session web UI over the same coding-agent SDK as the terminal.
+Remote web interface for local Pi sessions. Based on
+[`ankitchouhan1020/pi-gui-extension`](https://github.com/ankitchouhan1020/pi-gui-extension).
 
+> Work in progress: keep the server on localhost until browser authentication ships.
 
-<img width="2940" height="1846" alt="pi-gui" src="https://github.com/user-attachments/assets/e1da0c5c-fe19-445e-9f07-24625eeef5f9" />
+<img width="2940" height="1846" alt="Pi Remote Web" src="https://github.com/user-attachments/assets/e1da0c5c-fe19-445e-9f07-24625eeef5f9" />
 
 
 ## Install
 
 ```bash
-pi install npm:pi-gui-extension
+pi install ~/Projects/pi-remote-web
 ```
 
 Requires Node.js ≥ 20 and a working pi install (models / auth already set up).
@@ -18,23 +20,21 @@ Git and path installs work from the repository because package-root `dist/` is
 committed. After changing `web/`, run `npm install --prefix web && npm run build`
 before testing the local package with `pi install <path>`.
 
-```bash
-pi remove npm:pi-gui-extension
-```
+The renamed package is not published to npm yet.
 
 ## Usage
 
 In any pi session:
 
 ```text
-/gui                          # live-attach current session + open browser
-/gui <sessionId>              # open that session (live if in-process, else from disk)
-/gui open <sessionId>         # same
-/gui open <sessionId> 4000    # custom port
-/gui stop                     # shut down
+/remote-web                          # live-attach current session + open browser
+/remote-web <sessionId>              # open that session (live if in-process, else from disk)
+/remote-web open <sessionId>         # same
+/remote-web open <sessionId> 4000    # custom port
+/remote-web stop                     # shut down
 ```
 
-`/gui` ensures the host runs in this process (takes over the port if needed), then opens the browser on the session. Pass a **session id** (or path) to target a specific chat; omit it to use the current TUI session.
+`/remote-web` ensures the host runs in this process (takes over the port if needed), then opens the browser on the session. Pass a **session id** (or path) to target a specific chat; omit it to use the current TUI session.
 
 How this relates to pi (disk vs live, ownership): [ownership documentation](./docs/src/content/docs/concepts/ownership.md).
 
@@ -56,8 +56,8 @@ Localhost only (`127.0.0.1`). No auth — treat it like the TUI on your machine.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `PI_GUI_PORT` | `3847` | HTTP port |
-| `PI_GUI_SESSION_IDLE_MS` | `86400000` (1 day) | Close hub session when no SSE clients (`0` disables) |
+| `PI_REMOTE_WEB_PORT` | `3847` | HTTP port |
+| `PI_REMOTE_WEB_SESSION_IDLE_MS` | `86400000` (1 day) | Close hub session when no SSE clients (`0` disables) |
 
 Models, auth, skills, and extensions come from pi — this package does not add a second config system.
 
@@ -67,7 +67,7 @@ Models, auth, skills, and extensions come from pi — this package does not add 
 
 ## Documentation
 
-For humans: [pi-gui.pages.dev](https://pi-gui.pages.dev/) is a TanStack Start landing page with install, usage, and customization examples.
+Project home: [github.com/caidanw/pi-remote-web](https://github.com/caidanw/pi-remote-web).
 
 For coding agents: read [`llms.txt`](./llms.txt) before changing code. It contains the repo map, safe change boundaries, customization contract, anti-patterns, and test commands.
 

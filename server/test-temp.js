@@ -14,7 +14,7 @@ export function sessionDirForCwd(cwd) {
   return join(getAgentDir(), "sessions", safePath);
 }
 
-/** @param {string} prefix e.g. "pi-gui-hub-" */
+/** @param {string} prefix e.g. "pi-remote-web-hub-" */
 export function makeTestCwd(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }

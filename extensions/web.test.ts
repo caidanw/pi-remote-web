@@ -1,9 +1,9 @@
 /**
- * /gui command arg parsing (node --experimental-strip-types --test).
+ * /remote-web command arg parsing (node --experimental-strip-types --test).
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseArgs } from "./gui.ts";
+import { parseArgs } from "./web.ts";
 
 describe("parseArgs", () => {
   it("defaults to start on default port", () => {

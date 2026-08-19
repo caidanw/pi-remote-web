@@ -19,11 +19,21 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
+  acquireSessionLock,
+  releaseSessionLock,
+} from "../remote/session-lock.js";
+import {
   createSkillMarkdown,
   describeSkills,
   readSkillMarkdown,
   saveSkillMarkdown,
 } from "./skill-workspace.js";
+
+const HUB_RUNTIME_ID = `browser-${process.pid}-${randomBytes(8).toString("hex")}`;
+
+function lockDir() {
+  return process.env.PI_REMOTE_WEB_LOCK_DIR ?? join(getAgentDir(), "remote", "locks");
+}
 
 /**
  * Mirror of pi's getDefaultSessionDir (not re-exported from package index).
@@ -146,11 +156,14 @@ function pickModelFromScope(scopedModels, settingsManager, modelRuntime) {
  * @property {{ seq: number, event: unknown }[]} sseRing
  * @property {{ message: string, level: string }[] | undefined} [commandNotifications]
  * @property {ReturnType<typeof setTimeout> | null} [idleTimer]
+ * @property {{ lockDir: string, nonce: string } | undefined} [lock]
  * @property {boolean} [bound] true = external (TUI) session; close detaches only
  */
 
 /** Idle-close when no SSE listeners (0 = disabled). */
-const SESSION_IDLE_MS = Number(process.env.PI_GUI_SESSION_IDLE_MS ?? 24 * 60 * 60 * 1000);
+const SESSION_IDLE_MS = Number(
+  process.env.PI_REMOTE_WEB_SESSION_IDLE_MS ?? 24 * 60 * 60 * 1000,
+);
 
 /** Recent SSE events for Last-Event-ID replay after reconnect. */
 const SSE_RING_MAX = 500;
@@ -245,9 +258,11 @@ function slimTree(nodes) {
 }
 
 export class SessionHub {
-  constructor() {
+  /** @param {{ lockDir?: string }} [options] */
+  constructor(options = {}) {
     /** @type {Map<string, OpenSession>} */
     this.sessions = new Map();
+    this.lockDir = options.lockDir;
     /** @type {import("@earendil-works/pi-coding-agent").ModelRegistry | null} */
     this._warmReg = null;
     /** @type {AgentSession | null} keep alive so extension providers stay registered */
@@ -427,7 +442,7 @@ export class SessionHub {
   #scheduleIdle(s) {
     this.#cancelIdle(s);
     if (!(SESSION_IDLE_MS > 0)) return;
-    // Bound TUI session stays attached; browser can reconnect without /gui again.
+    // Bound TUI session stays attached; browser can reconnect without /remote-web again.
     if (s.bound) return;
     if (s.listeners.size > 0) return;
     s.idleTimer = setTimeout(() => {
@@ -440,7 +455,7 @@ export class SessionHub {
       }
       this.close(cur.id).catch((e) => {
         console.error(
-          "[pi-gui] idle close failed",
+          "[pi-remote-web] idle close failed",
           e instanceof Error ? e.message : e,
         );
       });
@@ -501,7 +516,7 @@ export class SessionHub {
       session.setScopedModels(scopedModels);
     } catch (err) {
       console.error(
-        "[pi-gui] scoped models sync failed",
+        "[pi-remote-web] scoped models sync failed",
         err instanceof Error ? err.message : err,
       );
     }
@@ -521,7 +536,7 @@ export class SessionHub {
       this._warmReg = modelRegistry(session);
     } catch (err) {
       console.error(
-        "[pi-gui] model registry warm failed",
+        "[pi-remote-web] model registry warm failed",
         err instanceof Error ? err.message : err,
       );
     }
@@ -629,11 +644,18 @@ export class SessionHub {
       return this.#withPath(opts.path, async () => {
         const existing = this.#findOpen(opts.path);
         if (existing) return this.#meta(existing);
-        const sessionManager = SessionManager.open(opts.path, undefined, cwd);
-        const { session, modelFallbackMessage } = await this.#createAgentSession(
-          { cwd, sessionManager },
-        );
-        return this.#mountSession(session, cwd, modelFallbackMessage);
+        const lock = await this.#acquireOwnedLock(opts.path);
+        let handedOff = false;
+        try {
+          const sessionManager = SessionManager.open(opts.path, undefined, cwd);
+          const { session, modelFallbackMessage } = await this.#createAgentSession(
+            { cwd, sessionManager },
+          );
+          handedOff = true;
+          return await this.#mountOwnedSession(session, cwd, modelFallbackMessage, lock);
+        } finally {
+          if (!handedOff) await releaseSessionLock(lock);
+        }
       });
     }
     const sessionManager = SessionManager.create(cwd);
@@ -641,7 +663,47 @@ export class SessionHub {
       cwd,
       sessionManager,
     });
-    return this.#mountSession(session, cwd, modelFallbackMessage);
+    return this.#mountOwnedSession(session, cwd, modelFallbackMessage);
+  }
+
+  /** @param {string} sessionPath */
+  async #acquireOwnedLock(sessionPath) {
+    const acquired = await acquireSessionLock({
+      baseDir: this.lockDir ?? lockDir(),
+      sessionPath,
+      ownerKind: "browser",
+      runtimeId: HUB_RUNTIME_ID,
+    });
+    if (acquired.ok) return acquired.lock;
+    const owner = acquired.owner?.runtimeId ?? "another Pi process";
+    const error = new Error(`Session is already owned by ${owner}`);
+    // @ts-expect-error
+    error.code = "SESSION_OWNED";
+    throw error;
+  }
+
+  /**
+   * @param {AgentSession} session
+   * @param {string} cwd
+   * @param {string} [modelFallbackMessage]
+   * @param {{ lockDir: string, nonce: string }} [existingLock]
+   */
+  async #mountOwnedSession(session, cwd, modelFallbackMessage, existingLock) {
+    let lock = existingLock;
+    try {
+      if (!lock && session.sessionFile) {
+        lock = await this.#acquireOwnedLock(session.sessionFile);
+      }
+      return await this.#mountSession(session, cwd, modelFallbackMessage, lock);
+    } catch (error) {
+      try {
+        session.dispose();
+      } catch {
+        /* preserve the mount error */
+      }
+      if (lock) await releaseSessionLock(lock);
+      throw error;
+    }
   }
 
   /**
@@ -649,8 +711,9 @@ export class SessionHub {
    * @param {AgentSession} session
    * @param {string} cwd
    * @param {string} [modelFallbackMessage]
+   * @param {{ lockDir: string, nonce: string }} [lock]
    */
-  async #mountSession(session, cwd, modelFallbackMessage) {
+  async #mountSession(session, cwd, modelFallbackMessage, lock) {
     /** @type {unknown[]} */
     const pendingUiEvents = [];
     /** @type {(event: unknown) => void} */
@@ -670,7 +733,7 @@ export class SessionHub {
       modelFallbackMessage,
     );
 
-    const entry = this.#registerOpen(session, cwd, { bound: false });
+    const entry = this.#registerOpen(session, cwd, { bound: false, lock });
     emitUiEvent = (event) => this.#fanout(entry, event);
     for (const event of pendingUiEvents) this.#fanout(entry, event);
     return {
@@ -692,7 +755,10 @@ export class SessionHub {
       (session.sessionFile ? this.#findOpen(session.sessionFile) : null);
     if (existing) {
       if (existing.session === session) return this.#meta(existing);
-      // Same id/path, different object (session replace) — drop stale entry.
+      if (!existing.bound) {
+        throw new Error("Session is already owned by the browser");
+      }
+      // Same id/path, different live object (session replace) — drop stale entry.
       this.#drop(existing, { dispose: false });
     }
     const cwd =
@@ -717,7 +783,7 @@ export class SessionHub {
   /**
    * @param {AgentSession} session
    * @param {string} cwd
-   * @param {{ bound?: boolean }} [opts]
+   * @param {{ bound?: boolean, lock?: { lockDir: string, nonce: string } }} [opts]
    * @returns {OpenSession}
    */
   #registerOpen(session, cwd, opts = {}) {
@@ -733,6 +799,7 @@ export class SessionHub {
       sseSeq: 0,
       sseRing: [],
       bound: Boolean(opts.bound),
+      lock: opts.lock,
     };
     entry.unsub = session.subscribe((event) => this.#fanout(entry, event));
     this.sessions.set(id, entry);
@@ -816,7 +883,7 @@ export class SessionHub {
       },
       onError: (err) => {
         console.error(
-          `[pi-gui] extension error (${err.extensionPath}):`,
+          `[pi-remote-web] extension error (${err.extensionPath}):`,
           err.error instanceof Error ? err.error.message : err.error,
         );
       },
@@ -836,7 +903,7 @@ export class SessionHub {
       await runner.emit({ type: "session_start", reason: "resume" });
     } catch (err) {
       console.error(
-        "[pi-gui] session activate failed",
+        "[pi-remote-web] session activate failed",
         err instanceof Error ? err.message : err,
       );
     }
@@ -1795,11 +1862,13 @@ export class SessionHub {
         });
       } catch (err) {
         console.error(
-          "[pi-gui] session_shutdown failed",
+          "[pi-remote-web] session_shutdown failed",
           err instanceof Error ? err.message : err,
         );
       }
+      const lock = cur.lock;
       this.#drop(cur, { dispose: true });
+      if (lock) await releaseSessionLock(lock);
       return true;
     });
   }

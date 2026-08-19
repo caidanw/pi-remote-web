@@ -45,7 +45,7 @@ export type StreamEffect =
   | { type: "retry"; message: string }
   | { type: "retry_end"; success: boolean; finalError?: string };
 
-const SEQ_STORE = "pi-gui-sse-seq:";
+const SEQ_STORE = "pi-remote-web-sse-seq:";
 
 export function readStoredSeq(sessionId: string): number {
   try {

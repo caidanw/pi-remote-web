@@ -34,7 +34,7 @@ export const BUILTIN_SLASH_COMMANDS: readonly BuiltinSlash[] = [
   { name: "compact", description: "Manually compact the session context", source: "builtin", go: "action:compact" },
   { name: "resume", description: "Resume a different session", source: "builtin", needsSession: false, go: "palette:resume" },
   { name: "reload", description: "Reload keybindings, extensions, skills, prompts, themes, and context files", source: "builtin", go: "na" },
-  { name: "quit", description: "Quit pi-gui", source: "builtin", needsSession: false, go: "action:quit" },
+  { name: "quit", description: "Quit Pi Remote Web", source: "builtin", needsSession: false, go: "action:quit" },
 ];
 
 export function builtinByName(name: string): BuiltinSlash | undefined {

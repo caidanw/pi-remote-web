@@ -1,5 +1,5 @@
 /**
- * SSE resume protocol for pi-gui.
+ * SSE resume protocol for pi-remote-web.
  *
  * Cold open / gap  → client REST snapshot (no ring replay)
  * Hot resume       → ring replay for seq > after, then live

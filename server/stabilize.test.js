@@ -4,8 +4,10 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { slimSseEvent, formatSseEvent } from "./http.js";
 import { SessionHub } from "./hub.js";
+import { acquireSessionLock, releaseSessionLock } from "../remote/session-lock.js";
 import { makeTestCwd, cleanupTestCwd } from "./test-temp.js";
 
 describe("slimSseEvent", () => {
@@ -41,8 +43,8 @@ describe("SessionHub open/close", () => {
   let cwd;
 
   before(() => {
-    cwd = makeTestCwd("pi-gui-hub-");
-    hub = new SessionHub();
+    cwd = makeTestCwd("pi-remote-web-hub-");
+    hub = new SessionHub({ lockDir: join(cwd, "locks") });
   });
 
   after(async () => {
@@ -91,6 +93,25 @@ describe("SessionHub open/close", () => {
     const meta = hub.get(a.path);
     assert.equal(meta.id, a.id);
     await hub.close(a.id);
+  });
+
+  it("refuses to open a session owned by another live runtime", async () => {
+    const a = await hub.open({ cwd, fresh: true });
+    assert.ok(a.path);
+    await hub.close(a.id);
+    const external = await acquireSessionLock({
+      baseDir: join(cwd, "locks"),
+      sessionPath: a.path,
+      ownerKind: "terminal",
+      runtimeId: "terminal-owner",
+      pid: process.pid,
+    });
+    assert.equal(external.ok, true);
+    await assert.rejects(
+      hub.open({ path: a.path, cwd }),
+      /Session is already owned by terminal-owner/,
+    );
+    if (external.ok) await releaseSessionLock(external.lock);
   });
 
   it("ensure reopens imported session by id", async () => {
@@ -374,7 +395,7 @@ describe("SessionHub attach (bound / live)", () => {
   let cwd;
 
   before(() => {
-    cwd = makeTestCwd("pi-gui-attach-");
+    cwd = makeTestCwd("pi-remote-web-attach-");
     hub = new SessionHub();
   });
 

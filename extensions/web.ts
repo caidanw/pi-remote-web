@@ -1,8 +1,8 @@
 /**
- * Pi extension: /gui starts localhost web UI in-process and attaches the live session.
+ * Pi extension: /remote-web starts localhost web UI in-process and attaches the live session.
  *
- * Install: pi install /path/to/pi-gui
- * Or: pi -e ./extensions/gui.ts
+ * Install: pi install /path/to/pi-remote-web
+ * Or: pi -e ./extensions/web.ts
  */
 import {
   AgentSession,
@@ -62,13 +62,13 @@ function getSessionById(id: string) {
 /** @type {ReturnType<typeof createServer> | null} */
 let app: ReturnType<typeof createServer> | null = null;
 
-const DEFAULT_PORT = Number(process.env.PI_GUI_PORT || 3847);
+const DEFAULT_PORT = Number(process.env.PI_REMOTE_WEB_PORT || 3847);
 
 /**
- * Parse `/gui` args.
- * - `/gui` · `/gui 4000` — live-attach current session
- * - `/gui <sessionId|path>` · `/gui open <id>` — open that session in the UI
- * - `/gui stop`
+ * Parse `/remote-web` args.
+ * - `/remote-web` · `/remote-web 4000` — live-attach current session
+ * - `/remote-web <sessionId|path>` · `/remote-web open <id>` — open that session in the UI
+ * - `/remote-web stop`
  */
 export function parseArgs(raw?: string): {
   cmd: "start" | "stop";
@@ -138,7 +138,7 @@ async function resolveSessionInHub(
   const currentId = ctx.sessionManager.getSessionId();
   const ref = (sessionRef || currentId || "").trim();
   if (!ref) {
-    throw new Error("no session id (pass /gui <sessionId> or use in a live session)");
+    throw new Error("no session id (pass /remote-web <sessionId> or use in a live session)");
   }
 
   // Current TUI session → live attach
@@ -209,20 +209,20 @@ async function ensureServer(
   if (app) return;
 
   if (await isUp(port)) {
-    notify(`Taking over pi-gui on :${port} for live session…`);
+    notify(`Taking over pi-remote-web on :${port} for live session…`);
     await stopServer(port);
     if (!(await waitUntilDown(port))) {
       throw new Error(
-        `port ${port} still busy after shutdown — free it or run /gui stop there`,
+        `port ${port} still busy after shutdown — free it or run /remote-web stop there`,
       );
     }
   } else {
-    notify("Starting pi-gui…");
+    notify("Starting pi-remote-web…");
   }
 
   await startServer(port);
   if (!app) {
-    throw new Error(`failed to bind pi-gui on :${port}`);
+    throw new Error(`failed to bind pi-remote-web on :${port}`);
   }
 }
 
@@ -265,9 +265,9 @@ function openBrowser(url: string): void {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerCommand("gui", {
+  pi.registerCommand("remote-web", {
     description:
-      "Open pi-gui. /gui · /gui <sessionId> · /gui open <id> · /gui stop. Takes over port if needed.",
+      "Open pi-remote-web. /remote-web · /remote-web <sessionId> · /remote-web open <id> · /remote-web stop. Takes over port if needed.",
     handler: async (args, ctx) => {
       const { cmd, port, sessionRef } = parseArgs(args);
       const base = `http://127.0.0.1:${port}`;
@@ -276,9 +276,9 @@ export default function (pi: ExtensionAPI) {
         if (cmd === "stop") {
           const result = await stopServer(port);
           if (result === "not_running") {
-            ctx.ui.notify(`pi-gui not running on :${port}`, "info");
+            ctx.ui.notify(`pi-remote-web not running on :${port}`, "info");
           } else {
-            ctx.ui.notify(`pi-gui stopped (:${port})`, "info");
+            ctx.ui.notify(`pi-remote-web stopped (:${port})`, "info");
           }
           return;
         }
@@ -286,17 +286,17 @@ export default function (pi: ExtensionAPI) {
         // Own host (take over foreign process if needed).
         await ensureServer(port, (msg) => ctx.ui.notify(msg, "info"));
 
-        // Current session, or explicit /gui <sessionId> / /gui open <id>
+        // Current session, or explicit /remote-web <sessionId> / /remote-web open <id>
         const { id, live } = await resolveSessionInHub(sessionRef, ctx);
         const url = `${base}/sessions/${encodeURIComponent(id)}`;
         ctx.ui.notify(
-          live ? `pi-gui: ${url} (live)` : `pi-gui: ${url}`,
+          live ? `pi-remote-web: ${url} (live)` : `pi-remote-web: ${url}`,
           "info",
         );
         openBrowser(url);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        ctx.ui.notify(`pi-gui failed: ${msg}`, "error");
+        ctx.ui.notify(`pi-remote-web failed: ${msg}`, "error");
       }
     },
   });

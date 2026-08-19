@@ -44,8 +44,8 @@
 
   let { sessionId, cwd, onCollapse }: Props = $props();
 
-  const WIDTH_KEY = "pi-gui-git-sidebar-width";
-  const WRAP_KEY = "pi-gui-git-diff-wrap";
+  const WIDTH_KEY = "pi-remote-web-git-sidebar-width";
+  const WRAP_KEY = "pi-remote-web-git-diff-wrap";
   const WIDTH_MIN = 280;
   const WIDTH_MAX = 640;
   const WIDTH_DEFAULT = 440;
@@ -75,8 +75,8 @@
       const n = (event as CustomEvent<{ appearance?: { rightSidebarWidth?: number } }>).detail?.appearance?.rightSidebarWidth;
       if (typeof n === "number") width = clampWidth(n);
     };
-    window.addEventListener("pi-gui:customization", update);
-    return () => window.removeEventListener("pi-gui:customization", update);
+    window.addEventListener("pi-remote-web:customization", update);
+    return () => window.removeEventListener("pi-remote-web:customization", update);
   });
   /** Soft-wrap long lines (persisted). */
   let wrap = $state(

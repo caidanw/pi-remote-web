@@ -1,5 +1,5 @@
 /**
- * Minimal HTTP + SSE API for pi-gui.
+ * Minimal HTTP + SSE API for Pi Remote Web.
  * No framework — node:http only (ponytail).
  */
 import http from "node:http";
@@ -21,6 +21,8 @@ import {
  * @type {{ stayAlive: boolean, close: null | (() => Promise<unknown>) }}
  */
 const hostCtl = { stayAlive: false, close: null };
+
+/** @typedef {import("./remote-broker.js").RemoteBroker} RemoteBroker */
 
 /** @param {unknown} images */
 function hasImages(images) {
@@ -207,7 +209,7 @@ async function gitFileDiff(cwd, filePath) {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const WEB_DIST = path.join(ROOT, "dist");
-const WEB_DEV = process.env.PI_GUI_DEV === "1";
+const WEB_DEV = process.env.PI_REMOTE_WEB_DEV === "1";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -291,6 +293,14 @@ function sessionAction(pathname, suffix) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/** @param {string} pathname @param {string} suffix */
+function remoteSessionAction(pathname, suffix) {
+  const m = pathname.match(
+    new RegExp(`^/api/remote/sessions/([^/]+)/${suffix}$`),
+  );
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 /**
  * Drop assistantMessageEvent.partial — it duplicates event.message and
  * doubles JSON cost on every token. UI only reads e.message.
@@ -331,8 +341,9 @@ function lastEventIdFrom(req, searchParams) {
 /**
  * @param {http.IncomingMessage} req
  * @param {http.ServerResponse} res
+ * @param {RemoteBroker | undefined} remoteBroker
  */
-async function handleApi(req, res) {
+async function handleApi(req, res, remoteBroker) {
   const { pathname, searchParams } = parsePath(req.url || "/");
   const method = req.method || "GET";
 
@@ -352,6 +363,7 @@ async function handleApi(req, res) {
       return json(res, 200, {
         ok: true,
         open: hub.listOpen().length,
+        remote: remoteBroker?.listSessions().length ?? 0,
         cwd: process.cwd(),
       });
     }
@@ -442,6 +454,84 @@ async function handleApi(req, res) {
       }
     }
 
+    // GET /api/remote/sessions — interactive Pi processes registered with the daemon
+    if (method === "GET" && pathname === "/api/remote/sessions") {
+      return json(res, 200, { sessions: remoteBroker?.listSessions() ?? [] });
+    }
+
+    let remoteId = remoteSessionAction(pathname, "messages");
+    if (method === "GET" && remoteId && remoteBroker) {
+      return json(res, 200, { messages: remoteBroker.getMessages(remoteId) });
+    }
+
+    remoteId = remoteSessionAction(pathname, "prompt");
+    if (method === "POST" && remoteId && remoteBroker) {
+      const body = await readJson(req);
+      if (typeof body.message !== "string" || !body.message.trim()) {
+        return json(res, 400, { error: "message required" });
+      }
+      const result = await remoteBroker.command(remoteId, "prompt", {
+        message: body.message,
+        deliverAs: body.deliverAs,
+      });
+      return json(res, 202, result);
+    }
+
+    remoteId = remoteSessionAction(pathname, "abort");
+    if (method === "POST" && remoteId && remoteBroker) {
+      return json(res, 200, await remoteBroker.command(remoteId, "abort"));
+    }
+
+    remoteId = remoteSessionAction(pathname, "events");
+    if (method === "GET" && remoteId && remoteBroker) {
+      const afterSeq = lastEventIdFrom(req, searchParams);
+      const { seq: headSeq, ringStart } = remoteBroker.ringInfo(remoteId);
+      const replay = shouldReplayRing(afterSeq, ringStart);
+      req.socket?.setTimeout(0);
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.write(
+        `data: ${JSON.stringify(
+          connectedPayload({ id: remoteId, seq: headSeq, ringStart }),
+        )}\n\n`,
+      );
+
+      let lastWritten = replay ? afterSeq : headSeq;
+      let pending = [];
+      let replaying = true;
+      const write = (event, seq) => {
+        if (res.writableEnded || !(seq > lastWritten)) return;
+        lastWritten = seq;
+        res.write(formatSseEvent(event, seq));
+      };
+      const unsub = remoteBroker.subscribeSession(remoteId, (event, seq) => {
+        if (replaying) pending.push({ event, seq });
+        else write(event, seq);
+      });
+      if (replay) {
+        for (const item of remoteBroker.eventsAfter(remoteId, afterSeq)) {
+          write(item.event, item.seq);
+        }
+      }
+      replaying = false;
+      for (const item of pending) write(item.event, item.seq);
+      pending = [];
+
+      const beat = setInterval(() => {
+        if (!res.writableEnded) res.write(": ping\n\n");
+      }, 15_000);
+      req.on("close", () => {
+        clearInterval(beat);
+        unsub();
+      });
+      return;
+    }
+
     // GET /api/sessions?cwd=
     if (method === "GET" && pathname === "/api/sessions") {
       const cwd = searchParams.get("cwd") || undefined;
@@ -484,7 +574,7 @@ async function handleApi(req, res) {
       const s = await hub.ensure(id);
       // 202 fire-and-forget; hub.#failTurn emits error + agent_settled on failure
       hub.prompt(s.id, body.message, body.images).catch((err) => {
-        console.error("[pi-gui] prompt error", s.id, err);
+        console.error("[pi-remote-web] prompt error", s.id, err);
       });
       return json(res, 202, { ok: true, id: s.id });
     }
@@ -624,7 +714,7 @@ async function handleApi(req, res) {
       }
       const s = await hub.ensure(id);
       hub.steer(s.id, body.message, body.images).catch((err) => {
-        console.error("[pi-gui] steer error", s.id, err);
+        console.error("[pi-remote-web] steer error", s.id, err);
       });
       return json(res, 202, { ok: true, id: s.id });
     }
@@ -657,7 +747,7 @@ async function handleApi(req, res) {
           excludeFromContext: Boolean(body.excludeFromContext),
         })
         .catch((err) => {
-          console.error("[pi-gui] bash error", s.id, err);
+          console.error("[pi-remote-web] bash error", s.id, err);
         });
       return json(res, 202, { ok: true, id: s.id });
     }
@@ -863,7 +953,10 @@ async function handleApi(req, res) {
     if (code === "SESSION_NOT_OPEN" || /^Session not open:/.test(message)) {
       return json(res, 404, { error: message, code: "SESSION_NOT_OPEN" });
     }
-    console.error("[pi-gui]", message);
+    if (code === "SESSION_OWNED") {
+      return json(res, 409, { error: message, code: "SESSION_OWNED" });
+    }
+    console.error("[pi-remote-web]", message);
     return json(res, 500, { error: message });
   }
 }
@@ -933,7 +1026,7 @@ function sendFile(res, filePath) {
   const stream = createReadStream(filePath);
 
   const fail = (err) => {
-    if (err) console.error("[pi-gui] static", filePath, err.message || err);
+    if (err) console.error("[pi-remote-web] static", filePath, err.message || err);
     if (!res.headersSent) text(res, 404, "not found");
     else if (!res.writableEnded) res.end();
   };
@@ -963,7 +1056,7 @@ async function handleStatic(req, res) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`<!doctype html>
 <html><body style="font-family:system-ui;padding:2rem">
-  <h1>pi-gui</h1>
+  <h1>Pi Remote Web</h1>
   <p>Web UI not built. Run <code>npm run dev:web</code> (port 5173) or <code>npm run build</code>.</p>
   <p>API is up at <code>/api/health</code>.</p>
 </body></html>`);
@@ -980,12 +1073,13 @@ async function handleStatic(req, res) {
 }
 
 /**
- * @param {{ port?: number; stayAlive?: boolean }} opts
- * stayAlive: in-process /gui — close server without process.exit
+ * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker }} opts
+ * stayAlive: in-process /remote-web — close server without process.exit
  */
 export function createServer(opts = {}) {
-  const port = opts.port ?? Number(process.env.PI_GUI_PORT || 3847);
+  const port = opts.port ?? Number(process.env.PI_REMOTE_WEB_PORT || 3847);
   const stayAlive = Boolean(opts.stayAlive);
+  const remoteBroker = opts.remoteBroker;
   hostCtl.stayAlive = stayAlive;
 
   const server = http.createServer((req, res) => {
@@ -993,14 +1087,14 @@ export function createServer(opts = {}) {
     Promise.resolve()
       .then(async () => {
         if ((req.url || "").startsWith("/api")) {
-          await handleApi(req, res);
+          await handleApi(req, res, remoteBroker);
         } else {
           await handleStatic(req, res);
         }
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
-        console.error("[pi-gui] request error", message);
+        console.error("[pi-remote-web] request error", message);
         json(res, 500, { error: message });
       });
   });
@@ -1011,7 +1105,7 @@ export function createServer(opts = {}) {
   server.headersTimeout = 0;
 
   server.on("error", (err) => {
-    console.error("[pi-gui] server error", err.message);
+    console.error("[pi-remote-web] server error", err.message);
   });
 
   const api = {
@@ -1021,7 +1115,7 @@ export function createServer(opts = {}) {
     /** @param {() => void} [cb] */
     listen(cb) {
       server.listen(port, "127.0.0.1", () => {
-        console.log(`[pi-gui] http://127.0.0.1:${port}`);
+        console.log(`[pi-remote-web] http://127.0.0.1:${port}`);
         cb?.();
       });
       return server;

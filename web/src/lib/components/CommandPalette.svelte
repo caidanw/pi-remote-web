@@ -120,7 +120,7 @@
     "App",
     "Help",
   ];
-  const RECENT_COMMANDS_KEY = "pi-gui.recent-commands";
+  const RECENT_COMMANDS_KEY = "pi-remote-web.recent-commands";
   const RECENT_COMMANDS_MAX = 5;
 
   type Props = {

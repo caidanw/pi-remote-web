@@ -8,6 +8,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "./http.js";
 import { hub } from "./hub.js";
+import { acquireSessionLock, releaseSessionLock } from "../remote/session-lock.js";
 import { makeTestCwd, cleanupTestCwd } from "./test-temp.js";
 
 /** @param {string} base @param {string} path @param {RequestInit} [init] */
@@ -89,10 +90,26 @@ describe("HTTP wire contract", () => {
   let cwd;
   /** @type {string} */
   let sessionId;
+  /** @type {string | undefined} */
+  let previousLockDir;
 
   before(async () => {
-    cwd = makeTestCwd("pi-gui-http-");
-    app = createServer({ port: 0 });
+    cwd = makeTestCwd("pi-remote-web-http-");
+    previousLockDir = process.env.PI_REMOTE_WEB_LOCK_DIR;
+    process.env.PI_REMOTE_WEB_LOCK_DIR = `${cwd}/locks`;
+    app = createServer({
+      port: 0,
+      remoteBroker: {
+        listSessions: () => [
+          { runtimeId: "terminal-one", connected: true },
+          { runtimeId: "terminal-two", connected: false },
+        ],
+        getMessages: (runtimeId) => [
+          { role: "user", content: `messages for ${runtimeId}` },
+        ],
+        command: async (_runtimeId, command) => ({ accepted: command }),
+      },
+    });
     await new Promise((resolve) => app.listen(resolve));
     const addr = app.server.address();
     assert.ok(addr && typeof addr === "object");
@@ -121,6 +138,8 @@ describe("HTTP wire contract", () => {
       /* ignore */
     }
     cleanupTestCwd(cwd);
+    if (previousLockDir === undefined) delete process.env.PI_REMOTE_WEB_LOCK_DIR;
+    else process.env.PI_REMOTE_WEB_LOCK_DIR = previousLockDir;
   });
 
   it("GET /api/health", async () => {
@@ -129,6 +148,33 @@ describe("HTTP wire contract", () => {
     assert.equal(body.ok, true);
     assert.equal(typeof body.open, "number");
     assert.ok(body.open >= 1);
+    assert.equal(body.remote, 2);
+  });
+
+  it("GET /api/remote/sessions lists registered terminals", async () => {
+    const { res, body } = await api(base, "/api/remote/sessions");
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      body.sessions.map((session) => [session.runtimeId, session.connected]),
+      [
+        ["terminal-one", true],
+        ["terminal-two", false],
+      ],
+    );
+  });
+
+  it("reads and prompts a registered terminal", async () => {
+    const messages = await api(base, "/api/remote/sessions/terminal-one/messages");
+    assert.equal(messages.res.status, 200);
+    assert.equal(messages.body.messages[0].content, "messages for terminal-one");
+
+    const prompted = await api(base, "/api/remote/sessions/terminal-one/prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "hello" }),
+    });
+    assert.equal(prompted.res.status, 202);
+    assert.deepEqual(prompted.body, { accepted: "prompt" });
   });
 
   it("GET /api/customization returns safe defaults", async () => {
@@ -200,6 +246,31 @@ describe("HTTP wire contract", () => {
     });
     assert.equal(saved.res.status, 200);
     assert.ok(saved.body.workspace.skills.some((s) => s.name === "gui-test-skill"));
+  });
+
+  it("returns conflict instead of opening a terminal-owned session", async () => {
+    const created = await hub.open({ cwd, fresh: true });
+    assert.ok(created.path);
+    await hub.close(created.id);
+    const external = await acquireSessionLock({
+      baseDir: `${cwd}/locks`,
+      sessionPath: created.path,
+      ownerKind: "terminal",
+      runtimeId: "terminal-owner",
+      pid: process.pid,
+    });
+    assert.equal(external.ok, true);
+    try {
+      const { res, body } = await api(base, "/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: created.path, cwd }),
+      });
+      assert.equal(res.status, 409);
+      assert.equal(body.code, "SESSION_OWNED");
+    } finally {
+      if (external.ok) await releaseSessionLock(external.lock);
+    }
   });
 
   it("POST /api/sessions/:id/prompt validates body", async () => {

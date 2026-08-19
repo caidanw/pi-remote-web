@@ -1,6 +1,6 @@
-# pi-gui — agent instructions
+# Pi Remote Web — agent instructions
 
-Localhost web UI for pi. Thin Svelte client + multi-session hub over `@earendil-works/pi-coding-agent`.
+Localhost web UI for Pi. Thin Svelte client + multi-session hub over `@earendil-works/pi-coding-agent`.
 
 Repository guidance for contributors and coding agents. The published npm package contains only the extension runtime and prebuilt UI.
 
@@ -17,8 +17,10 @@ Do **not** crawl old docs for a small UI change; the operating contract lives in
 ## Layout
 
 ```text
-extensions/gui.ts     # pi: /gui (in-process + live attach)
-server/               # cli, http, hub, sse-protocol
+extensions/web.ts     # pi: /remote-web (in-process + live attach)
+extensions/remote.ts  # auto-register interactive Pi with the daemon
+remote/               # Unix-socket protocol, reconnecting client, ownership locks
+server/               # cli, http, hub, remote broker, sse-protocol
 web/src/lib/
   api.ts · chat-stream.ts · plugins/ · components/ · kit/
 dist/                 # production UI (npm run build)
@@ -35,10 +37,10 @@ npm run dev:server   # :3847
 npm run dev:web      # :5173 proxies /api
 # package UI: npm run build
 # build docs: npm run build:docs
-# test extension: pi install <path> → /gui
+# test extension: pi install <path> → /remote-web
 ```
 
-Port: `PI_GUI_PORT` (default `3847`).
+Port: `PI_REMOTE_WEB_PORT` (default `3847`). The remote server remains loopback-only until authentication ships.
 
 ## Zones (summary)
 

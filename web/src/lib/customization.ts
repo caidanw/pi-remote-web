@@ -35,7 +35,7 @@ export function applyCustomization(config: CustomizationConfig, cwd?: string) {
     sound.turnComplete = `/api/customization/asset?path=${encodeURIComponent(sound.turnComplete)}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""}`;
   }
   setFeedbackConfig(sound);
-  window.dispatchEvent(new CustomEvent("pi-gui:customization", { detail: config }));
+  window.dispatchEvent(new CustomEvent("pi-remote-web:customization", { detail: config }));
 }
 
 export async function loadAndApplyCustomization(cwd?: string) {

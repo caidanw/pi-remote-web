@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-const INSTALL = 'pi install npm:pi-gui-extension'
-const GITHUB = 'https://github.com/ankitchouhan1020/pi-gui-extension'
+const INSTALL = 'pi install ~/Projects/pi-remote-web'
+const GITHUB = 'https://github.com/caidanw/pi-remote-web'
 const SCREENSHOT = '/screenshot.webp'
 
 type Row = { name: string; detail: ReactNode }
@@ -10,7 +10,7 @@ const FEATURES: { group: string; rows: Row[] }[] = [
   {
     group: 'sessions & workspace',
     rows: [
-      { name: 'Live attach', detail: <>run <code>/gui</code> inside pi and the current session opens in your browser</> },
+      { name: 'Live attach', detail: <>run <code>/remote-web</code> inside pi and the current session opens in your browser</> },
       { name: 'Many chats', detail: 'open, resume, switch, and run multiple pi sessions from one workspace' },
       { name: 'Persistent history', detail: 'pi still owns the durable JSONL session files; the browser follows along' },
       { name: 'Local server', detail: <>HTTP and SSE stay bound to <code>127.0.0.1</code></> },
@@ -38,14 +38,14 @@ const FEATURES: { group: string; rows: Row[] }[] = [
 
 const START: Row[] = [
   { name: INSTALL, detail: 'install the extension into pi' },
-  { name: '/gui', detail: 'attach the current live session and open the browser' },
-  { name: '/gui <sessionId>', detail: 'open a session ID or session file path' },
-  { name: '/gui open <sessionId> 4000', detail: 'use a custom local port' },
-  { name: '/gui stop', detail: 'stop the local host' },
+  { name: '/remote-web', detail: 'attach the current live session and open the browser' },
+  { name: '/remote-web <sessionId>', detail: 'open a session ID or session file path' },
+  { name: '/remote-web open <sessionId> 4000', detail: 'use a custom local port' },
+  { name: '/remote-web stop', detail: 'stop the local host' },
 ]
 
 const FAQ: Row[] = [
-  { name: 'Does it replace pi?', detail: 'No. pi-gui is the browser shell; pi remains the agent runtime.' },
+  { name: 'Does it replace pi?', detail: 'No. Pi Remote Web is the browser shell; Pi remains the agent runtime.' },
   { name: 'Is it public?', detail: <>No. The server binds to <code>127.0.0.1</code> only.</> },
   { name: 'Does it collect data?', detail: "No telemetry or analytics. Your sessions stay in pi's local storage." },
   { name: 'Do I configure models twice?', detail: 'No. Provider auth, models, tools, and skills stay in pi.' },
@@ -58,7 +58,7 @@ export default function App() {
       <header className="flex flex-col gap-3">
         <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-[0.02em]">
           <img src="/favicon.svg" alt="" width={48} height={48} className="block size-12 border border-zinc-600 bg-card [image-rendering:pixelated]" />
-          pi-gui
+          Pi Remote Web
         </h1>
         <p className="text-foreground/70">
           Turn pi sessions into a <span className="text-brand">local browser workspace</span>.
@@ -84,7 +84,7 @@ export default function App() {
       </section>
 
       <figure className="m-0 flex flex-col gap-2">
-        <img src={SCREENSHOT} alt="pi-gui browser workspace with chat, tools, git, and files" width={1344} height={844} className="block w-full rounded-lg border border-border bg-card" />
+        <img src={SCREENSHOT} alt="Pi Remote Web browser workspace with chat, tools, git, and files" width={1344} height={844} className="block w-full rounded-lg border border-border bg-card" />
         <figcaption className="text-[13px] text-muted-foreground">Sessions, chat, tool output, git, and files in one local browser workspace</figcaption>
       </figure>
 
@@ -107,7 +107,7 @@ export default function App() {
 
       <section className="flex flex-col gap-3.5">
         <SectionHeading>Configure</SectionHeading>
-        <p className="text-muted-foreground">Create <code>~/.pi/agent/pi-gui/config.json</code>. Project overrides use <code>.pi/pi-gui/config.json</code> after pi trusts the project.</p>
+        <p className="text-muted-foreground">Create <code>~/.pi/agent/pi-remote-web/config.json</code>. Project overrides use <code>.pi/pi-remote-web/config.json</code> after pi trusts the project.</p>
         <pre><code>{`{
   "version": 1,
   "appearance": { "density": "compact" },

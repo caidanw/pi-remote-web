@@ -36,7 +36,7 @@ describe("skill workspace", () => {
   });
 
   it("creates and edits project skills only through their loaded path", async () => {
-    const cwd = makeTestCwd("pi-gui-skills-");
+    const cwd = makeTestCwd("pi-remote-web-skills-");
     try {
       const created = await createSkillMarkdown(cwd, {
         scope: "project",

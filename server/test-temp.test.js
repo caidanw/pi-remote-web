@@ -8,7 +8,7 @@ import { makeTestCwd, cleanupTestCwd, sessionDirForCwd } from "./test-temp.js";
 
 describe("test-temp cleanup", () => {
   it("removes cwd and linked pi session dir", () => {
-    const cwd = makeTestCwd("pi-gui-tmpclean-");
+    const cwd = makeTestCwd("pi-remote-web-tmpclean-");
     const sess = sessionDirForCwd(cwd);
     mkdirSync(sess, { recursive: true });
     writeFileSync(`${sess}/probe.jsonl`, "{}\n");

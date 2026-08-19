@@ -63,10 +63,10 @@
   import Telescope from "@lucide/svelte/icons/telescope";
   import { playFeedback } from "$lib/feedback";
 
-  const LS_CWD = "pi-gui-last-cwd";
-  const LS_MODEL = "pi-gui-last-model";
+  const LS_CWD = "pi-remote-web-last-cwd";
+  const LS_MODEL = "pi-remote-web-last-model";
   /** Composer text survives accidental refresh (tab-scoped). */
-  const SS_DRAFT = "pi-gui-draft:";
+  const SS_DRAFT = "pi-remote-web-draft:";
 
   function readLastCwd(): string {
     try {

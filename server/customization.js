@@ -148,8 +148,8 @@ async function readConfig(dir, source) {
 
 export function customizationDirs(cwd = process.cwd()) {
   return {
-    global: path.join(getAgentDir(), "pi-gui"),
-    project: path.join(path.resolve(cwd), ".pi", "pi-gui"),
+    global: path.join(getAgentDir(), "pi-remote-web"),
+    project: path.join(path.resolve(cwd), ".pi", "pi-remote-web"),
   };
 }
 

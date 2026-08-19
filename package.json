@@ -1,25 +1,24 @@
 {
-  "name": "pi-gui-extension",
+  "name": "pi-remote-web",
   "version": "0.4.1",
-  "description": "Pi extension for a localhost multi-session web UI.",
+  "description": "Remote web interface for local Pi sessions.",
   "type": "module",
   "license": "MIT",
   "author": "Ankit Chouhan (https://github.com/ankitchouhan1020)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ankitchouhan1020/pi-gui-extension.git"
+    "url": "git+https://github.com/caidanw/pi-remote-web.git"
   },
   "bugs": {
-    "url": "https://github.com/ankitchouhan1020/pi-gui-extension/issues"
+    "url": "https://github.com/caidanw/pi-remote-web/issues"
   },
-  "homepage": "https://pi-gui.pages.dev/",
+  "homepage": "https://github.com/caidanw/pi-remote-web",
   "keywords": [
     "pi-package",
     "pi",
     "pi-extension",
-    "pi-gui",
-    "pi-gui-extension",
-    "gui",
+    "pi-remote-web",
+    "remote",
     "web-ui",
     "agent",
     "sse"
@@ -29,16 +28,26 @@
   },
   "files": [
     "index.js",
+    "server/cli.js",
     "server/http.js",
     "server/hub.js",
     "server/customization.js",
+    "server/remote-broker.js",
     "server/skill-workspace.js",
     "server/sse-protocol.js",
-    "extensions/gui.ts",
+    "remote/client.js",
+    "remote/protocol.js",
+    "remote/session-lock.js",
+    "extensions/web.ts",
+    "extensions/remote.ts",
     "dist",
     "README.md",
     "LICENSE"
   ],
+  "bin": {
+    "pi-remote-web": "server/cli.js",
+    "pi-remote-daemon": "server/cli.js"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -51,13 +60,14 @@
     "build:docs": "npm run build --prefix docs",
     "check": "npm run check --prefix web",
     "check:docs": "npm run check --prefix docs",
-    "smoke": "node --input-type=module -e \"await import('./server/hub.js'); await import('./server/http.js'); await import('./server/sse-protocol.js'); console.log('smoke ok')\"",
-    "test": "npm run smoke && node --test server/stabilize.test.js server/sse-protocol.test.js server/http.contract.test.js server/skill-workspace.test.js server/test-temp.test.js server/customization.test.js && node --experimental-strip-types --test web/src/lib/chat-stream.test.ts web/src/lib/special-message.test.ts web/src/lib/tool-presentation.test.ts web/src/lib/work-section.test.ts extensions/gui.test.ts",
+    "smoke": "node --input-type=module -e \"await import('./server/hub.js'); await import('./server/http.js'); await import('./server/remote-broker.js'); await import('./remote/client.js'); await import('./remote/session-lock.js'); console.log('smoke ok')\"",
+    "test": "npm run smoke && node --test remote/protocol.test.js remote/session-lock.test.js server/remote-broker.test.js server/stabilize.test.js server/sse-protocol.test.js server/http.contract.test.js server/skill-workspace.test.js server/test-temp.test.js server/customization.test.js && node --experimental-strip-types --test web/src/lib/chat-stream.test.ts web/src/lib/special-message.test.ts web/src/lib/tool-presentation.test.ts web/src/lib/work-section.test.ts extensions/web.test.ts extensions/remote.test.ts",
     "prepack": "npm test && npm run build"
   },
   "pi": {
     "extensions": [
-      "./extensions/gui.ts"
+      "./extensions/web.ts",
+      "./extensions/remote.ts"
     ]
   },
   "peerDependencies": {

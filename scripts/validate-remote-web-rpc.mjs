@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Validate in-process /gui via pi --mode rpc.
- * Loads ONLY local extensions/gui.ts (--no-extensions -e).
+ * Validate in-process /remote-web via pi --mode rpc.
+ * Loads ONLY local extensions/web.ts (--no-extensions -e).
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = Number(process.env.PI_GUI_VALIDATE_PORT || 13947);
-const EXT = join(root, "extensions", "gui.ts");
+const PORT = Number(process.env.PI_REMOTE_WEB_VALIDATE_PORT || 13947);
+const EXT = join(root, "extensions", "web.ts");
 
 function log(...a) {
   console.log("[validate]", ...a);
@@ -42,14 +42,14 @@ async function main() {
   }
 
   // Uses pi settings packages (local path install of this repo) + default model.
-  log("starting pi rpc (packages from settings; local pi-gui)");
+  log("starting pi rpc (packages from settings; local pi-remote-web)");
   const child = spawn(
     "pi",
     ["--mode", "rpc", "--no-session"],
     {
       cwd: root,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, PI_GUI_PORT: String(PORT) },
+      env: { ...process.env, PI_REMOTE_WEB_PORT: String(PORT) },
     },
   );
 
@@ -97,12 +97,12 @@ async function main() {
     log("rpc ready; sessionId=", sessionId || "(unknown)");
     log("process.pid=", child.pid);
 
-    // /gui start
-    send({ id: "gui-start", type: "prompt", message: `/gui ${PORT}` });
+    // /remote-web start
+    send({ id: "gui-start", type: "prompt", message: `/remote-web ${PORT}` });
     const guiStart = await waitFor("gui-start", 20000);
     log("gui start response:", JSON.stringify(guiStart).slice(0, 300));
     if (!guiStart.success) {
-      throw new Error(`/gui failed: ${JSON.stringify(guiStart)}`);
+      throw new Error(`/remote-web failed: ${JSON.stringify(guiStart)}`);
     }
 
     // health should come up
@@ -117,7 +117,7 @@ async function main() {
       await wait(150);
     }
     if (!health?.ok) {
-      throw new Error(`health not ok after /gui: ${JSON.stringify(health)}`);
+      throw new Error(`health not ok after /remote-web: ${JSON.stringify(health)}`);
     }
     log("health:", health.body);
 
@@ -189,10 +189,10 @@ async function main() {
     log("messages status:", msgs.status, "count:", msgs.body?.messages?.length ?? msgs.body?.length);
 
     // stop
-    send({ id: "gui-stop", type: "prompt", message: `/gui stop ${PORT}` });
+    send({ id: "gui-stop", type: "prompt", message: `/remote-web stop ${PORT}` });
     const guiStop = await waitFor("gui-stop", 15000);
     log("gui stop response:", JSON.stringify(guiStop).slice(0, 300));
-    if (!guiStop.success) throw new Error(`/gui stop failed: ${JSON.stringify(guiStop)}`);
+    if (!guiStop.success) throw new Error(`/remote-web stop failed: ${JSON.stringify(guiStop)}`);
 
     await wait(400);
     let down = false;
@@ -206,19 +206,19 @@ async function main() {
       await wait(800);
       try {
         await fetchJson(`http://127.0.0.1:${PORT}/api/health`);
-        throw new Error("health still up after /gui stop");
+        throw new Error("health still up after /remote-web stop");
       } catch (e) {
         if (String(e.message).includes("still up")) throw e;
         down = true;
       }
     }
-    log("OK: server stopped after /gui stop");
+    log("OK: server stopped after /remote-web stop");
 
     // pi still alive
     if (child.exitCode !== null) {
       throw new Error(`pi exited early with code ${child.exitCode}`);
     }
-    log("OK: pi process still running after /gui stop");
+    log("OK: pi process still running after /remote-web stop");
 
     console.log("\nVALIDATION PASSED");
   } catch (err) {

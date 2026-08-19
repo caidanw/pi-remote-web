@@ -1,22 +1,22 @@
-# pi-gui LLM instructions
+# Pi Remote Web LLM instructions
 
-pi-gui is a localhost multi-session browser UI for pi. Pi owns AgentSession,
-models, auth, tools, skills, extensions, and session JSONL files. pi-gui is a
+Pi Remote Web is a localhost multi-session browser UI for Pi. Pi owns AgentSession,
+models, auth, tools, skills, extensions, and session JSONL files. Pi Remote Web is a
 thin Svelte client plus Node http/SSE hub over @earendil-works/pi-coding-agent.
 
 ## Install / use facts
 
 ```bash
-pi install npm:pi-gui-extension
+pi install ~/Projects/pi-remote-web
 ```
 
 Inside pi:
 
 ```text
-/gui                          # live-attach current session + open browser
-/gui <sessionId>              # open session id/path
-/gui open <sessionId> 4000    # custom port
-/gui stop                     # stop host
+/remote-web                          # live-attach current session + open browser
+/remote-web <sessionId>              # open session id/path
+/remote-web open <sessionId> 4000    # custom port
+/remote-web stop                     # stop host
 ```
 
 Localhost only: 127.0.0.1. Do not add public bind/auth unless explicitly asked.
@@ -25,7 +25,7 @@ No Express/socket.io/tRPC; use node:http and SSE.
 ## Repository map
 
 ```text
-extensions/gui.ts        # pi /gui command, in-process attach, port takeover
+extensions/web.ts        # pi /remote-web command, in-process attach, port takeover
 server/http.js           # REST + static dist + SSE endpoint
 server/hub.js            # multi-session AgentSession lifecycle (red zone)
 server/sse-protocol.js   # SSE replay/snapshot policy (red zone)
@@ -86,8 +86,8 @@ Prefer the highest zone that works.
 Config locations, merge order:
 
 1. Built-in defaults
-2. `~/.pi/agent/pi-gui/config.json`
-3. `.pi/pi-gui/config.json` only after pi trusts the project
+2. `~/.pi/agent/pi-remote-web/config.json`
+3. `.pi/pi-remote-web/config.json` only after pi trusts the project
 
 Supported v1 keys:
 

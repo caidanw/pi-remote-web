@@ -1,7 +1,7 @@
 export type FeedbackCue = "send" | "success" | "error" | "toggle";
 
-const SOUND_KEY = "pi-gui-sound-enabled";
-const SOUND_EVENT = "pi-gui:sound-change";
+const SOUND_KEY = "pi-remote-web-sound-enabled";
+const SOUND_EVENT = "pi-remote-web:sound-change";
 const DEFAULT_GAIN = 0.035;
 
 let feedbackConfig: { enabled?: boolean; volume?: number; turnComplete?: string } = {};
