@@ -40,8 +40,8 @@ function recorder(failBootout = false) {
     run: async (file, args) => {
       calls.push([file, args]);
       if (failBootout && args[0] === "bootout") {
-        const error = new Error("not loaded");
-        error.stderr = "Could not find service";
+        const error = new Error("Command failed");
+        error.stderr = "Boot-out failed: 5: Input/output error\n";
         throw error;
       }
       return { stdout: "", stderr: "" };

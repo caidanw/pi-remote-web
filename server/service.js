@@ -1,7 +1,8 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,11 +123,16 @@ async function defaultRun(file, args) {
   });
 }
 
+// launchctl reports a not-loaded service as EIO/"Boot-out failed: 5", not a distinct code.
 async function ignoreMissing(fn) {
   try {
     return await fn();
   } catch (error) {
-    if (error?.code === "ENOENT" || /Could not find service|No such process|service not found/i.test(error?.stderr ?? "")) {
+    const stderr = String(error?.stderr ?? error?.message ?? "");
+    if (
+      error?.code === "ENOENT" ||
+      /Could not find service|No such process|service not found|Boot-out failed|Input\/output error/i.test(stderr)
+    ) {
       return null;
     }
     throw error;
@@ -250,7 +256,7 @@ export async function serviceStatus(options = {}) {
 
 async function commandExists(file, run) {
   try {
-    if (path.isAbsolute(file)) await run("/usr/bin/test", ["-x", file]);
+    if (path.isAbsolute(file)) await access(file, constants.X_OK);
     else await run(file, ["--version"]);
     return true;
   } catch {
