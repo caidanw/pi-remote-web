@@ -13,6 +13,7 @@
   import Archive from "@lucide/svelte/icons/archive";
   import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import Command from "@lucide/svelte/icons/command";
+  import GitBranch from "@lucide/svelte/icons/git-branch";
 
   type Props = {
     sessions: SessionRow[];
@@ -22,6 +23,7 @@
     onSelect: (s: SessionRow) => void;
     /** Optional cwd — new session in that folder. */
     onNew: (cwd?: string) => void;
+    onNewWorktree?: () => void;
     onCollapse?: () => void;
     /** Open command palette (⌘K / Ctrl+K). */
     onOpenPalette?: () => void;
@@ -33,6 +35,7 @@
     listReady = false,
     onSelect,
     onNew,
+    onNewWorktree,
     onCollapse,
     onOpenPalette,
   }: Props = $props();
@@ -387,6 +390,16 @@
         <MessageSquarePlus class="size-3.5 shrink-0 text-muted-foreground" />
         <span class="min-w-0 flex-1 truncate">New session</span>
       </button>
+      {#if onNewWorktree}
+        <button
+          type="button"
+          class="pi-tactile mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium transition-[background-color,transform] hover:bg-muted/80"
+          onclick={onNewWorktree}
+        >
+          <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
+          <span class="min-w-0 flex-1 truncate">Git worktrees</span>
+        </button>
+      {/if}
 
       <Separator class="my-1.5" />
       <div class="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">

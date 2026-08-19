@@ -24,6 +24,7 @@ const hostCtl = { stayAlive: false, close: null };
 
 /** @typedef {import("./remote-broker.js").RemoteBroker} RemoteBroker */
 /** @typedef {import("./rpc-workers.js").RpcWorkerManager} RpcWorkerManager */
+/** @typedef {import("./worktrees.js").WorktreeManager} WorktreeManager */
 
 function remoteRow(broker, session) {
   if (typeof broker?.getSessionRow === "function") {
@@ -144,7 +145,12 @@ function runGit(cwd, args) {
     execFile(
       "git",
       args,
-      { cwd, maxBuffer: 12 * 1024 * 1024, encoding: "utf8" },
+      {
+        cwd,
+        env: { ...process.env, LANG: "C", LC_ALL: "C" },
+        maxBuffer: 12 * 1024 * 1024,
+        encoding: "utf8",
+      },
       (err, stdout, stderr) => {
         const code =
           err && typeof /** @type {{ code?: unknown }} */ (err).code === "number"
@@ -411,8 +417,9 @@ function localSource(workers, id) {
  * @param {http.ServerResponse} res
  * @param {RemoteBroker | undefined} remoteBroker
  * @param {RpcWorkerManager | undefined} workers
+ * @param {WorktreeManager | undefined} worktrees
  */
-async function handleApi(req, res, remoteBroker, workers) {
+async function handleApi(req, res, remoteBroker, workers, worktrees) {
   const { pathname, searchParams } = parsePath(req.url || "/");
   const method = req.method || "GET";
 
@@ -607,6 +614,68 @@ async function handleApi(req, res, remoteBroker, workers) {
         unsub();
       });
       return;
+    }
+
+    // GET /api/worktrees?repository=&branch= — native Git worktree discovery
+    if (method === "GET" && pathname === "/api/worktrees") {
+      if (!worktrees) return json(res, 503, { error: "Worktrees require the persistent daemon" });
+      try {
+        return json(
+          res,
+          200,
+          await worktrees.list(
+            searchParams.get("repository") || "",
+            searchParams.get("branch") || "worktree",
+          ),
+        );
+      } catch (error) {
+        return json(res, error?.code === "GIT_FAILED" ? 400 : 422, {
+          error: error instanceof Error ? error.message : String(error),
+          code: error?.code,
+        });
+      }
+    }
+
+    // POST /api/worktrees — create a worktree and launch its browser-owned Pi worker
+    if (method === "POST" && pathname === "/api/worktrees") {
+      if (!worktrees || !workers) return json(res, 503, { error: "Worktrees require the persistent daemon" });
+      const body = await readJson(req);
+      try {
+        const created = await worktrees.create(body);
+        try {
+          const session = await workers.open({ cwd: created.destination, fresh: true });
+          return json(res, 201, { ...created, session });
+        } catch (error) {
+          if (error && typeof error === "object") error.createdPath = created.destination;
+          throw error;
+        }
+      } catch (error) {
+        const conflict = new Set(["BRANCH_OCCUPIED", "DESTINATION_OCCUPIED"]);
+        const message = error instanceof Error ? error.message : String(error);
+        return json(res, conflict.has(error?.code) ? 409 : 422, {
+          error: error?.createdPath
+            ? `${message}. Worktree remains at ${error.createdPath}`
+            : message,
+          code: error?.code,
+          ...(error?.createdPath ? { createdPath: error.createdPath } : {}),
+          ...(error?.recovery ? { recovery: error.recovery } : {}),
+        });
+      }
+    }
+
+    // POST /api/worktrees/launch — start a browser worker in an existing worktree
+    if (method === "POST" && pathname === "/api/worktrees/launch") {
+      if (!worktrees || !workers) return json(res, 503, { error: "Worktrees require the persistent daemon" });
+      const body = await readJson(req);
+      try {
+        const worktree = await worktrees.resolveLaunch(body.repository, body.path);
+        return json(res, 200, { worktree, session: await workers.open({ cwd: worktree.path, fresh: true }) });
+      } catch (error) {
+        return json(res, 422, {
+          error: error instanceof Error ? error.message : String(error),
+          code: error?.code,
+        });
+      }
     }
 
     // GET /api/sessions?cwd=
@@ -1273,7 +1342,7 @@ async function handleStatic(req, res) {
 }
 
 /**
- * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker; workers?: RpcWorkerManager }} opts
+ * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker; workers?: RpcWorkerManager; worktrees?: WorktreeManager }} opts
  * stayAlive: in-process /remote-web — close server without process.exit
  */
 export function createServer(opts = {}) {
@@ -1281,6 +1350,7 @@ export function createServer(opts = {}) {
   const stayAlive = Boolean(opts.stayAlive);
   const remoteBroker = opts.remoteBroker;
   const workers = opts.workers;
+  const worktrees = opts.worktrees;
   hostCtl.stayAlive = stayAlive;
 
   const server = http.createServer((req, res) => {
@@ -1288,7 +1358,7 @@ export function createServer(opts = {}) {
     Promise.resolve()
       .then(async () => {
         if ((req.url || "").startsWith("/api")) {
-          await handleApi(req, res, remoteBroker, workers);
+          await handleApi(req, res, remoteBroker, workers, worktrees);
         } else {
           await handleStatic(req, res);
         }

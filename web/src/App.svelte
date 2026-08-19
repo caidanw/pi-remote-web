@@ -28,6 +28,7 @@
   import ForkConfirmDialog from "$lib/components/ForkConfirmDialog.svelte";
   import TreeNavigateDialog from "$lib/components/TreeNavigateDialog.svelte";
   import SkillWorkspaceDialog from "$lib/components/SkillWorkspaceDialog.svelte";
+  import WorktreeDialog from "$lib/components/WorktreeDialog.svelte";
   import { loadAndApplyCustomization } from "$lib/customization";
   const SIDEBAR_KEY = "pi-remote-web-sidebar-open";
   const GIT_SIDEBAR_KEY = "pi-remote-web-git-sidebar-open";
@@ -80,6 +81,7 @@
   let terminalSwitch = $state<Partial<SessionRow> | null>(null);
   let cmdkOpen = $state(false);
   let skillWorkspaceOpen = $state(false);
+  let worktreeDialogOpen = $state(false);
   let forkRequest = $state<{
     sourceId: string;
     candidate: ForkCandidate;
@@ -256,6 +258,14 @@
     forceCwd = cwd ?? null;
     selected = undefined;
     setSessionUrl(undefined);
+  }
+
+  function onWorktreeLaunch(session: SessionRow) {
+    const row = { ...session, running: true };
+    selected = row;
+    upsertSession(row);
+    setSessionUrl(row.id);
+    void refresh();
   }
 
   async function ensureSession(opts?: {
@@ -696,6 +706,7 @@
       {listReady}
       onSelect={onSelect}
       onNew={onNew}
+      onNewWorktree={() => (worktreeDialogOpen = true)}
       onCollapse={() => setSidebarOpen(false)}
       onOpenPalette={() => (cmdkOpen = true)}
     />
@@ -820,6 +831,13 @@
   sessionId={selected?.id}
   cwd={selected?.cwd}
   onClose={() => (skillWorkspaceOpen = false)}
+/>
+
+<WorktreeDialog
+  open={worktreeDialogOpen}
+  cwd={selected?.cwd || defaultCwd}
+  onClose={() => (worktreeDialogOpen = false)}
+  onLaunch={onWorktreeLaunch}
 />
 
 {#if forkRequest}

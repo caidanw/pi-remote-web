@@ -136,6 +136,49 @@ export function getCustomization(cwd?: string) {
   }>(`/api/customization${q}`);
 }
 
+export type GitWorktree = {
+  path: string;
+  head?: string;
+  branch?: string;
+  ref?: string;
+  detached?: boolean;
+  bare?: boolean;
+  locked?: true | string;
+  prunable?: true | string;
+};
+
+export type WorktreeList = {
+  repository: string;
+  roots: string[];
+  worktrees: GitWorktree[];
+  suggestedDestination: string;
+};
+
+export function listWorktrees(repository: string, branch?: string) {
+  const query = new URLSearchParams({ repository });
+  if (branch) query.set("branch", branch);
+  return req<WorktreeList>(`/api/worktrees?${query}`);
+}
+
+export function createWorktree(options: {
+  repository: string;
+  branch: string;
+  base?: string;
+  destination?: string;
+}) {
+  return req<WorktreeList & { destination: string; worktree: GitWorktree; session: SessionRow }>(
+    "/api/worktrees",
+    { method: "POST", body: JSON.stringify(options) },
+  );
+}
+
+export function launchWorktree(repository: string, path: string) {
+  return req<{ worktree: GitWorktree; session: SessionRow }>("/api/worktrees/launch", {
+    method: "POST",
+    body: JSON.stringify({ repository, path }),
+  });
+}
+
 /** List subdirectories for the in-app folder browser. */
 export function listFs(path?: string) {
   const q = path ? `?path=${encodeURIComponent(path)}` : "";

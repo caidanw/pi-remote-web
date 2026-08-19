@@ -7,6 +7,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createServer } from "./http.js";
 import { RemoteBroker } from "./remote-broker.js";
 import { RpcWorkerManager } from "./rpc-workers.js";
+import { WorktreeManager } from "./worktrees.js";
 
 const args = process.argv.slice(2);
 let port = Number(process.env.PI_REMOTE_WEB_PORT || 3847);
@@ -17,6 +18,7 @@ const socketPath =
   process.env.PI_REMOTE_WEB_SOCKET ??
   join(getAgentDir(), "remote", "pi-remote-web.sock");
 const workers = new RpcWorkerManager();
+const worktrees = new WorktreeManager();
 const broker = new RemoteBroker({
   socketPath,
   requestTakeover: (sessionPath) => workers.takeover(sessionPath),
@@ -24,7 +26,7 @@ const broker = new RemoteBroker({
 await broker.listen();
 console.log(`[pi-remote-web] remote broker ${socketPath}`);
 
-const app = createServer({ port, remoteBroker: broker, workers });
+const app = createServer({ port, remoteBroker: broker, workers, worktrees });
 app.listen();
 
 // Last-resort log; static/API handlers must not throw uncaught (see http.js sendFile).
