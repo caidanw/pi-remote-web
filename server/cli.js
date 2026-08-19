@@ -11,6 +11,7 @@ import { RemoteBroker } from "./remote-broker.js";
 import { RpcWorkerManager } from "./rpc-workers.js";
 import { WorktreeManager } from "./worktrees.js";
 import { AuthManager } from "./auth.js";
+import { encodeQr, renderQr } from "./qr.js";
 import {
   controlService,
   doctorService,
@@ -58,7 +59,11 @@ const auth = await new AuthManager({
 if (serviceCommand === "pair") {
   if (!auth.publicUrl) throw new Error("Set PI_REMOTE_WEB_PUBLIC_URL to the HTTPS Tailscale Serve URL before pairing");
   const token = await auth.issuePairingToken();
-  console.log(auth.pairingUrl(token));
+  const url = auth.pairingUrl(token);
+  if (process.stdout.isTTY) {
+    console.log(renderQr(encodeQr(url, { ecc: "L" }), 2, { ansi: true }));
+  }
+  console.log(url);
   process.exit(0);
 }
 
