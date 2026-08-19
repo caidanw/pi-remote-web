@@ -60,7 +60,8 @@
   },
   "scripts": {
     "dev": "npm run dev:web & npm run dev:server",
-    "dev:server": "PI_REMOTE_WEB_DEV=1 node --watch server/cli.js",
+    "dev:server": "PI_REMOTE_WEB_DEV=1 PI_REMOTE_WEB_INSECURE_NO_AUTH=1 node --watch server/cli.js",
+    "dev:built": "PI_REMOTE_WEB_INSECURE_NO_AUTH=1 node server/cli.js",
     "dev:web": "npm run dev --prefix web",
     "dev:docs": "npm run dev --prefix docs",
     "build": "npm run build --prefix web",

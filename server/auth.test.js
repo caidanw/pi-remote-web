@@ -6,7 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { AUTH_COOKIE, AuthManager, PAIRING_TTL_MS } from "./auth.js";
+import { AUTH_COOKIE, AuthManager, PAIRING_TTL_MS, authDisabledByEnv } from "./auth.js";
 import { createServer } from "./http.js";
 
 const cleanups = [];
@@ -125,6 +125,13 @@ describe("browser authentication", () => {
       /must use HTTPS/,
     );
     assert.throws(() => createServer({ port: 0 }), /requires auth/);
+  });
+
+  it("disables auth only through its own explicit opt-in", () => {
+    assert.equal(authDisabledByEnv({}), false);
+    assert.equal(authDisabledByEnv({ PI_REMOTE_WEB_DEV: "1" }), false);
+    assert.equal(authDisabledByEnv({ PI_REMOTE_WEB_INSECURE_NO_AUTH: "true" }), false);
+    assert.equal(authDisabledByEnv({ PI_REMOTE_WEB_INSECURE_NO_AUTH: "1" }), true);
   });
 
   it("issues five-minute random single-use tokens and rejects expiry and replay", async () => {

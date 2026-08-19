@@ -10,7 +10,7 @@ import { createServer } from "./http.js";
 import { RemoteBroker } from "./remote-broker.js";
 import { RpcWorkerManager } from "./rpc-workers.js";
 import { WorktreeManager } from "./worktrees.js";
-import { AuthManager } from "./auth.js";
+import { AuthManager, authDisabledByEnv } from "./auth.js";
 import { encodeQr, renderQr } from "./qr.js";
 import {
   controlService,
@@ -77,6 +77,13 @@ if (serviceCommand === "revoke-all") {
   process.exit(0);
 }
 
+const insecure = authDisabledByEnv(process.env);
+if (insecure) {
+  console.warn(
+    `[pi-remote-web] WARNING: authentication disabled (PI_REMOTE_WEB_INSECURE_NO_AUTH=1); 127.0.0.1:${port} is unprotected`,
+  );
+}
+
 const socketPath =
   process.env.PI_REMOTE_WEB_SOCKET ??
   join(getAgentDir(), "remote", "pi-remote-web.sock");
@@ -94,7 +101,7 @@ const app = createServer({
   remoteBroker: broker,
   workers,
   worktrees,
-  auth: process.env.PI_REMOTE_WEB_DEV === "1" ? false : auth,
+  auth: insecure ? false : auth,
 });
 app.listen();
 

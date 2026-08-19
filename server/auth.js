@@ -53,6 +53,15 @@ function normalizeUrl(value, name, allowHttpLoopback = false) {
   return url;
 }
 
+/**
+ * Authentication is disabled only by its own explicit opt-in, never as a
+ * side effect of running the Vite dev server.
+ * @param {Record<string, string | undefined>} env
+ */
+export function authDisabledByEnv(env) {
+  return env.PI_REMOTE_WEB_INSECURE_NO_AUTH === "1";
+}
+
 export class AuthManager {
   /**
    * @param {{ configDir?: string; publicUrl?: string; port?: number; now?: () => number; pairingTtlMs?: number; sessionTtlMs?: number; allowHttpLoopback?: boolean; uid?: number; secretUid?: number }} [options]
