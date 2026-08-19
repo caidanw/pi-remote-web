@@ -31,6 +31,7 @@ describe("remote extension", () => {
     process.env.PI_REMOTE_WEB_LOCK_DIR = lockDir;
 
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    let branch: { type: string; message: Record<string, unknown> }[] = [];
     const statuses: string[] = [];
     const remotePrompts: { message: unknown; options?: unknown }[] = [];
     const selectedModels: string[] = [];
@@ -82,7 +83,7 @@ describe("remote extension", () => {
         getSessionId: () => "session-id",
         getSessionFile: () => sessionFile,
         getLeafId: () => "leaf-id",
-        getBranch: () => [],
+        getBranch: () => branch,
       },
       ui: {
         setStatus: (_key: string, value?: string) => {
@@ -131,6 +132,30 @@ describe("remote extension", () => {
       await handlers.get("message_start")?.({ message: { role: "user", content: "hello" } }, context);
       const event = await waitFor(() => broker.listSessions()[0]?.lastEvent ?? null);
       assert.equal(event.type, "message_start");
+
+      // Tool work must reach the browser while it runs, not only at turn end.
+      branch = [
+        {
+          type: "message",
+          message: {
+            id: "step-1",
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "checking" },
+              { type: "toolCall", id: "call-1", name: "bash" },
+            ],
+          },
+        },
+      ];
+      await handlers.get("tool_execution_start")?.({ toolCallId: "call-1", toolName: "bash" }, context);
+      const streamedStep = await waitFor(() => {
+        const transcript = broker.getMessages(registered.runtimeId);
+        return transcript.find((m) => m?.id === "step-1") ?? null;
+      });
+      assert.deepEqual(
+        streamedStep.content.map((part: { type: string }) => part.type),
+        ["thinking", "toolCall"],
+      );
 
       await handlers.get("session_shutdown")?.({}, context);
       const reacquired = await acquireSessionLock({

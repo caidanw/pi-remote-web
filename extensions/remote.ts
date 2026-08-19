@@ -89,6 +89,28 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     if (snapshot) client?.snapshot();
   }
 
+  /**
+   * Pi streams text deltas, but thinking and tool calls only land in the branch
+   * when a step completes, so the browser would show nothing while tools run.
+   */
+  let lastPublishedStep = "";
+  function publishCurrentStep(): void {
+    const ctx = currentContext;
+    if (!ctx || !client) return;
+    const branch = ctx.sessionManager.getBranch();
+    for (let i = branch.length - 1; i >= 0; i -= 1) {
+      const entry = branch[i];
+      if (entry?.type !== "message") continue;
+      const message = entry.message as Record<string, unknown> | undefined;
+      if (!message) return;
+      const fingerprint = `${String(message.id ?? "")}:${JSON.stringify(message.content ?? "").length}`;
+      if (fingerprint === lastPublishedStep) return;
+      lastPublishedStep = fingerprint;
+      publish({ type: "message_update", message });
+      return;
+    }
+  }
+
   async function handleCommand(frame: Record<string, unknown>): Promise<unknown> {
     const ctx = currentContext;
     if (!ctx) throw new Error("Remote session is not active");
@@ -283,13 +305,20 @@ export default function remoteExtension(pi: ExtensionAPI): void {
   });
   pi.on("message_end", (event) => {
     publish({ type: "message_end", ...event });
+    lastPublishedStep = "";
     streamingMessage = undefined;
     // No snapshot here: a full transcript per message saturates the socket on
     // long sessions and starves the live event stream. The daemon applies deltas.
   });
-  pi.on("tool_execution_start", (event) => publish({ type: "tool_execution_start", ...event }));
+  pi.on("tool_execution_start", (event) => {
+    publish({ type: "tool_execution_start", ...event });
+    publishCurrentStep();
+  });
   pi.on("tool_execution_update", (event) => publish({ type: "tool_execution_update", ...event }));
-  pi.on("tool_execution_end", (event) => publish({ type: "tool_execution_end", ...event }));
+  pi.on("tool_execution_end", (event) => {
+    publish({ type: "tool_execution_end", ...event });
+    publishCurrentStep();
+  });
   pi.on("model_select", (event) => publish({ type: "model_select", ...event }));
   pi.on("thinking_level_select", (event) => publish({ type: "thinking_level_select", ...event }));
   pi.on("session_info_changed", (event) => publish({ type: "session_info_changed", ...event }));
