@@ -122,7 +122,7 @@
   /** Server process.cwd() — fallback folder for new sessions */
   let defaultCwd = $state("");
   /** Prevent double-click open storms */
-  let opening = false;
+  let opening = $state(false);
   let releasing = $state(false);
 
   $effect(() => {
@@ -780,6 +780,19 @@
     </div>
   {/if}
   <div class="flex min-w-0 flex-1 flex-col">
+    {#if opening}
+      <div
+        class="flex items-center gap-2 border-b border-border/60 bg-muted/40 px-4 py-2 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+          aria-hidden="true"
+        ></span>
+        Opening session…
+      </div>
+    {/if}
     {#if err}
       <div
         class="flex flex-wrap items-center gap-3 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"

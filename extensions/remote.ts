@@ -284,7 +284,8 @@ export default function remoteExtension(pi: ExtensionAPI): void {
   pi.on("message_end", (event) => {
     publish({ type: "message_end", ...event });
     streamingMessage = undefined;
-    client?.snapshot();
+    // No snapshot here: a full transcript per message saturates the socket on
+    // long sessions and starves the live event stream. The daemon applies deltas.
   });
   pi.on("tool_execution_start", (event) => publish({ type: "tool_execution_start", ...event }));
   pi.on("tool_execution_update", (event) => publish({ type: "tool_execution_update", ...event }));

@@ -88,6 +88,48 @@ describe("remote broker", () => {
     );
   });
 
+  it("builds the transcript from streamed messages without full snapshots", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
+    const socketPath = path.join(dir, "broker.sock");
+    const client = makeClient(socketPath, "terminal");
+    const broker = new RemoteBroker({ socketPath });
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => broker.close());
+    cleanup.push(async () => client.stop());
+
+    await broker.listen();
+    client.start();
+    await waitFor(() => broker.listSessions()[0]?.connected);
+
+    client.publish({
+      type: "message_start",
+      message: { id: "m1", role: "assistant", content: [{ type: "text", text: "partial" }] },
+    });
+    await waitFor(() => broker.getMessages("terminal").some((m) => m.id === "m1"));
+
+    client.publish({
+      type: "message_end",
+      message: {
+        id: "m1",
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "final answer" }],
+      },
+    });
+    await waitFor(() => broker.getMessages("terminal").at(-1)?.stopReason === "stop");
+
+    const transcript = broker.getMessages("terminal");
+    const streamed = transcript.filter((m) => m.id === "m1");
+    assert.equal(streamed.length, 1, "a completed message replaces its streaming copy");
+    assert.equal(streamed[0].content[0].text, "final answer");
+
+    client.publish({
+      type: "message_end",
+      message: { id: "m2", role: "user", content: [{ type: "text", text: "next" }] },
+    });
+    await waitFor(() => broker.getMessages("terminal").at(-1)?.id === "m2");
+  });
+
   it("keeps a runtime-following stream across terminal /new while old paths unpin", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
     const socketPath = path.join(dir, "broker.sock");

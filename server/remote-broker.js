@@ -16,6 +16,32 @@ function sessionIdentity(frame) {
   return String(session.path || session.id || "");
 }
 
+/** @param {Record<string, unknown>} snapshot @param {Record<string, unknown>} message */
+function upsertMessage(snapshot, message) {
+  const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
+  snapshot.messages = messages;
+  const key = messageIdentity(message);
+  if (key !== null) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messageIdentity(messages[i]) === key) {
+        messages[i] = message;
+        return;
+      }
+    }
+  }
+  messages.push(message);
+}
+
+/** @param {unknown} message */
+function messageIdentity(message) {
+  if (!isRecord(message)) return null;
+  for (const field of ["_key", "id", "responseId"]) {
+    const value = message[field];
+    if (typeof value === "string" && value) return `${field}:${value}`;
+  }
+  return null;
+}
+
 function snapshotKey(frame) {
   return createHash("sha256").update(JSON.stringify(frame)).digest("base64url");
 }
@@ -429,6 +455,16 @@ export class RemoteBroker {
     }
     if (event.type === "thinking_level_select") meta.thinkingLevel = event.level;
     if (event.type === "session_info_changed") meta.name = event.name;
+    // Transcript is maintained from the message stream; full snapshots are only
+    // sent on connect and structural changes, so they must not be the source of truth.
+    if (
+      (event.type === "message_start" ||
+        event.type === "message_update" ||
+        event.type === "message_end") &&
+      isRecord(event.message)
+    ) {
+      upsertMessage(session.snapshot, event.message);
+    }
   }
 
   #publicSession(session) {
