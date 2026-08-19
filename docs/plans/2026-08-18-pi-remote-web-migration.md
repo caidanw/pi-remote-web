@@ -9,9 +9,9 @@ HAPI's existing `https://caidans-macbook-pro-2023.skate-danio.ts.net` →
 ```bash
 cd ~/Projects/pi-remote-web
 npm install && npm install --prefix web && npm run build
-export PI_REMOTE_WEB_PORT=3847
-export PI_REMOTE_WEB_PUBLIC_URL=https://caidans-macbook-pro-2023.skate-danio.ts.net:8443
-pi-remote-web install
+npm link                 # exposes the pi-remote-web command
+tailscale serve --bg --https=8443 http://127.0.0.1:3847
+pi-remote-web install    # public URL is detected from the serve route
 pi-remote-web status
 pi-remote-web doctor
 ```
@@ -36,7 +36,7 @@ Keep Funnel disabled. Confirm `tailscale serve status` still lists HAPI on 443.
 ## 3. Pair one browser
 
 ```bash
-pi-remote-web pair    # single-use, five-minute fragment URL
+pi-remote-web pair    # QR code + single-use, five-minute fragment URL
 ```
 
 Open the URL on the iPhone. Confirm the URL fragment never reaches the server,

@@ -14,6 +14,7 @@ import { AuthManager } from "./auth.js";
 import { encodeQr, renderQr } from "./qr.js";
 import {
   controlService,
+  detectPublicUrl,
   doctorService,
   installService,
   readServiceLogs,
@@ -28,9 +29,11 @@ const i = args.indexOf("--port");
 if (i >= 0 && args[i + 1]) port = Number(args[i + 1]);
 
 const serviceCommand = args[0];
+// Tailscale Serve already knows the HTTPS hostname; only override it explicitly.
+const publicUrl = process.env.PI_REMOTE_WEB_PUBLIC_URL ?? (await detectPublicUrl(port));
 if (["install", "uninstall", "start", "stop", "restart", "status", "doctor", "logs"].includes(serviceCommand)) {
   if (serviceCommand === "install") {
-    const config = await installService({ port, publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL });
+    const config = await installService({ port, publicUrl });
     console.log(`[pi-remote-web] installed ${config.plistPath}`);
   } else if (serviceCommand === "uninstall") {
     const config = await uninstallService();
@@ -51,13 +54,14 @@ if (["install", "uninstall", "start", "stop", "restart", "status", "doctor", "lo
   process.exit();
 }
 
-const auth = await new AuthManager({
-  port,
-  publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL,
-}).init();
+const auth = await new AuthManager({ port, publicUrl }).init();
 
 if (serviceCommand === "pair") {
-  if (!auth.publicUrl) throw new Error("Set PI_REMOTE_WEB_PUBLIC_URL to the HTTPS Tailscale Serve URL before pairing");
+  if (!auth.publicUrl) {
+    throw new Error(
+      `No Tailscale Serve route found for port ${port}. Run: tailscale serve --bg --https=443 http://127.0.0.1:${port}`,
+    );
+  }
   const token = await auth.issuePairingToken();
   const url = auth.pairingUrl(token);
   if (process.stdout.isTTY) {
@@ -94,7 +98,7 @@ const app = createServer({
 });
 app.listen();
 
-const service = serviceConfig({ port, publicUrl: process.env.PI_REMOTE_WEB_PUBLIC_URL });
+const service = serviceConfig({ port, publicUrl });
 let statusTimer;
 async function writeStatus() {
   await mkdir(service.stateDir, { recursive: true, mode: 0o700 });

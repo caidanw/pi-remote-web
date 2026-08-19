@@ -82,9 +82,16 @@ pi-remote-web restart
 pi-remote-web uninstall
 ```
 
-The LaunchAgent runs `caffeinate -s` and remains loopback-only. Set
-`PI_REMOTE_WEB_PUBLIC_URL` to the separate Tailscale Serve HTTPS URL before
-installing or pairing. These commands never configure Tailscale or modify HAPI.
+The LaunchAgent runs `caffeinate -s` and remains loopback-only. The public HTTPS
+URL is read from the existing Tailscale Serve route for this port, so pairing
+needs no hostname argument; set `PI_REMOTE_WEB_PUBLIC_URL` only to override it.
+These commands never configure Tailscale.
+
+Publish the daemon once with Tailscale (never Funnel):
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:3847
+```
 
 ## License
 

@@ -139,6 +139,60 @@ async function ignoreMissing(fn) {
   }
 }
 
+const TAILSCALE_PATHS = [
+  "/opt/homebrew/bin/tailscale",
+  "/usr/local/bin/tailscale",
+  "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+];
+
+async function tailscaleBinary(options) {
+  if (options.tailscalePath) return options.tailscalePath;
+  for (const candidate of TAILSCALE_PATHS) {
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Read the HTTPS URL Tailscale Serve already proxies to this daemon, so pairing
+ * never needs a hand-copied hostname.
+ * @param {number} port
+ * @returns {Promise<string|null>}
+ */
+export async function detectPublicUrl(port, options = {}) {
+  const run = options.run ?? defaultRun;
+  const binary = await tailscaleBinary(options);
+  if (!binary) return null;
+  let config;
+  try {
+    const { stdout } = await run(binary, ["serve", "status", "--json"]);
+    config = JSON.parse(stdout.slice(stdout.indexOf("{")));
+  } catch {
+    return null;
+  }
+  for (const [hostPort, entry] of Object.entries(config?.Web ?? {})) {
+    for (const [routePath, handler] of Object.entries(entry?.Handlers ?? {})) {
+      if (typeof handler?.Proxy !== "string") continue;
+      let proxy;
+      try {
+        proxy = new URL(handler.Proxy);
+      } catch {
+        continue;
+      }
+      if (Number(proxy.port) !== Number(port)) continue;
+      const separator = hostPort.lastIndexOf(":");
+      const host = hostPort.slice(0, separator);
+      const servePort = hostPort.slice(separator + 1);
+      const origin = servePort === "443" ? `https://${host}` : `https://${host}:${servePort}`;
+      return routePath && routePath !== "/" ? `${origin}${routePath.replace(/\/$/, "")}` : origin;
+    }
+  }
+  return null;
+}
+
 export async function installService(options = {}) {
   const config = serviceConfig(options);
   const run = options.run ?? defaultRun;

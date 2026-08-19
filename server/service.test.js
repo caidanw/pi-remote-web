@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   SERVICE_LABEL,
   controlService,
+  detectPublicUrl,
   doctorService,
   installService,
   launchAgentPlist,
@@ -162,6 +163,50 @@ describe("macOS service operations", () => {
     const unsafe = await serviceStatus({ ...options, run: recorder().run, fetch: async () => ({ ok: true }) });
     assert.equal(unsafe.stale, true);
     assert.equal(unsafe.liveSessions, null);
+  });
+
+  it("derives the pairing URL from the live Tailscale Serve route", async () => {
+    const options = await fixture();
+    const serve = (json) => async () => ({ stdout: JSON.stringify(json), stderr: "" });
+    const route = (hostPort, proxyPort, routePath = "/") => ({
+      Web: { [hostPort]: { Handlers: { [routePath]: { Proxy: `http://127.0.0.1:${proxyPort}` } } } },
+    });
+
+    assert.equal(
+      await detectPublicUrl(3847, {
+        tailscalePath: options.nodePath,
+        run: serve(route("mac.example.ts.net:443", 3847)),
+      }),
+      "https://mac.example.ts.net",
+    );
+    assert.equal(
+      await detectPublicUrl(3847, {
+        tailscalePath: options.nodePath,
+        run: serve(route("mac.example.ts.net:8443", 3847, "/remote/")),
+      }),
+      "https://mac.example.ts.net:8443/remote",
+    );
+    assert.equal(
+      await detectPublicUrl(3847, {
+        tailscalePath: options.nodePath,
+        run: serve(route("mac.example.ts.net:443", 3006)),
+      }),
+      null,
+      "a route to another app must not be claimed",
+    );
+    assert.equal(
+      await detectPublicUrl(3847, {
+        tailscalePath: options.nodePath,
+        run: async () => {
+          throw new Error("tailscaled not running");
+        },
+      }),
+      null,
+    );
+    assert.equal(
+      await detectPublicUrl(3847, { tailscalePath: path.join(options.root, "missing"), run: recorder().run }),
+      null,
+    );
   });
 
   it("doctor diagnoses permissions and stale locks without mutating", async () => {
