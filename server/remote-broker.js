@@ -23,10 +23,15 @@ function snapshotKey(frame) {
 const DEFAULT_RECONNECT_GRACE_MS = 30_000;
 
 export class RemoteBroker {
-  /** @param {{ socketPath: string; reconnectGraceMs?: number }} options */
-  constructor({ socketPath, reconnectGraceMs = DEFAULT_RECONNECT_GRACE_MS }) {
+  /** @param {{ socketPath: string; reconnectGraceMs?: number; requestTakeover?: (sessionPath: string) => Promise<unknown> }} options */
+  constructor({
+    socketPath,
+    reconnectGraceMs = DEFAULT_RECONNECT_GRACE_MS,
+    requestTakeover,
+  }) {
     this.socketPath = socketPath;
     this.reconnectGraceMs = reconnectGraceMs;
+    this.requestTakeover = requestTakeover;
     this.server = null;
     this.closing = false;
     /** @type {Map<string, { runtimeId: string; connected: boolean; registration?: Record<string, unknown>; snapshot?: Record<string, unknown>; lastEvent?: unknown; peer?: Peer; seq: number; ring: { seq: number, event: unknown }[]; listeners: Set<(event: unknown, seq: number) => void> }>} */
@@ -285,6 +290,40 @@ export class RemoteBroker {
       return;
     }
     if (typeof frame.runtimeId !== "string" || !frame.runtimeId) return;
+
+    if (
+      frame.type === "takeover_request" &&
+      typeof frame.requestId === "string" &&
+      typeof frame.sessionPath === "string"
+    ) {
+      Promise.resolve()
+        .then(() => {
+          if (!this.requestTakeover) throw new Error("Browser takeover unavailable");
+          return this.requestTakeover(frame.sessionPath);
+        })
+        .then((result) => {
+          peer.socket.write(encodeFrame({
+            protocol: REMOTE_PROTOCOL_VERSION,
+            type: "takeover_result",
+            runtimeId: frame.runtimeId,
+            requestId: frame.requestId,
+            ok: true,
+            result,
+          }));
+        })
+        .catch((error) => {
+          peer.socket.write(encodeFrame({
+            protocol: REMOTE_PROTOCOL_VERSION,
+            type: "takeover_result",
+            runtimeId: frame.runtimeId,
+            requestId: frame.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            code: error?.code,
+          }));
+        });
+      return;
+    }
 
     if (frame.type === "register") {
       const previous = this.sessions.get(frame.runtimeId);

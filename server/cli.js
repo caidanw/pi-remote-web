@@ -16,11 +16,14 @@ if (i >= 0 && args[i + 1]) port = Number(args[i + 1]);
 const socketPath =
   process.env.PI_REMOTE_WEB_SOCKET ??
   join(getAgentDir(), "remote", "pi-remote-web.sock");
-const broker = new RemoteBroker({ socketPath });
+const workers = new RpcWorkerManager();
+const broker = new RemoteBroker({
+  socketPath,
+  requestTakeover: (sessionPath) => workers.takeover(sessionPath),
+});
 await broker.listen();
 console.log(`[pi-remote-web] remote broker ${socketPath}`);
 
-const workers = new RpcWorkerManager();
 const app = createServer({ port, remoteBroker: broker, workers });
 app.listen();
 

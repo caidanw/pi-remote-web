@@ -151,6 +151,75 @@ describe("remote extension", () => {
     }
   });
 
+  it("requests idle browser takeover by path before retrying the terminal lock", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-takeover-"));
+    const socketPath = path.join(dir, "broker.sock");
+    const lockDir = path.join(dir, "locks");
+    const sessionFile = path.join(dir, "session.jsonl");
+    const previousSocket = process.env.PI_REMOTE_WEB_SOCKET;
+    const previousLocks = process.env.PI_REMOTE_WEB_LOCK_DIR;
+    process.env.PI_REMOTE_WEB_SOCKET = socketPath;
+    process.env.PI_REMOTE_WEB_LOCK_DIR = lockDir;
+    const browser = await acquireSessionLock({
+      baseDir: lockDir,
+      sessionPath: sessionFile,
+      ownerKind: "browser",
+      runtimeId: "browser-worker",
+    });
+    assert.equal(browser.ok, true);
+    let requestedPath = "";
+    const broker = new RemoteBroker({
+      socketPath,
+      requestTakeover: async (candidate) => {
+        requestedPath = candidate;
+        if (browser.ok) await releaseSessionLock(browser.lock);
+        return { ok: true };
+      },
+    });
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    let shutdown = false;
+    const pi = {
+      on(name: string, handler: (...args: unknown[]) => unknown) {
+        handlers.set(name, handler);
+      },
+      getSessionName: () => "Taken over",
+      getThinkingLevel: () => "off",
+    };
+    const context = {
+      mode: "tui",
+      cwd: dir,
+      isIdle: () => true,
+      shutdown: () => {
+        shutdown = true;
+      },
+      sessionManager: {
+        getSessionId: () => "takeover-session",
+        getSessionFile: () => sessionFile,
+        getLeafId: () => null,
+        getBranch: () => [],
+      },
+      ui: { setStatus: () => {}, notify: () => {} },
+    };
+
+    try {
+      await broker.listen();
+      remoteExtension(pi as unknown as ExtensionAPI);
+      await handlers.get("session_start")?.({}, context);
+      assert.equal(requestedPath, sessionFile);
+      assert.equal(shutdown, false);
+      await waitFor(() => broker.listSessions()[0] ?? null);
+      await handlers.get("session_shutdown")?.({}, context);
+    } finally {
+      await broker.close();
+      if (browser.ok) await releaseSessionLock(browser.lock);
+      await rm(dir, { recursive: true, force: true });
+      if (previousSocket === undefined) delete process.env.PI_REMOTE_WEB_SOCKET;
+      else process.env.PI_REMOTE_WEB_SOCKET = previousSocket;
+      if (previousLocks === undefined) delete process.env.PI_REMOTE_WEB_LOCK_DIR;
+      else process.env.PI_REMOTE_WEB_LOCK_DIR = previousLocks;
+    }
+  });
+
   it("rejects a terminal session when another live runtime owns its file", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-conflict-"));
     const lockDir = path.join(dir, "locks");

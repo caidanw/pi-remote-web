@@ -10,6 +10,70 @@ import {
 const DEFAULT_MAX_BACKOFF_MS = 10_000;
 const DEFAULT_MAX_QUEUE_BYTES = 1024 * 1024;
 
+/** Ask the daemon to release an idle browser worker before terminal lock retry. */
+export function requestBrowserTakeover({
+  socketPath,
+  runtimeId,
+  sessionPath,
+  timeoutMs = 20_000,
+}) {
+  const requestId = `${runtimeId}-${Date.now()}`;
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    let settled = false;
+    const done = (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const timer = setTimeout(
+      () => done(new Error("Browser takeover timed out")),
+      timeoutMs,
+    );
+    const parser = createFrameParser({
+      onFrame: (frame) => {
+        if (
+          !isRecord(frame) ||
+          frame.type !== "takeover_result" ||
+          frame.requestId !== requestId
+        ) return;
+        if (!frame.ok) {
+          const error = new Error(String(frame.error ?? "Browser takeover failed"));
+          error.code = frame.code;
+          done(error);
+          return;
+        }
+        if (isRecord(frame.result) && frame.result.ok === false) {
+          const error = new Error("Browser owner was not found");
+          error.code = frame.result.code;
+          done(error);
+          return;
+        }
+        done(null, frame.result);
+      },
+      onError: done,
+    });
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => parser.push(chunk));
+    socket.once("error", done);
+    socket.once("close", () => {
+      if (!settled) done(new Error("Browser takeover connection closed"));
+    });
+    socket.once("connect", () => {
+      socket.write(encodeFrame({
+        protocol: REMOTE_PROTOCOL_VERSION,
+        type: "takeover_request",
+        runtimeId,
+        requestId,
+        sessionPath,
+      }));
+    });
+  });
+}
+
 /**
  * Reconnecting adapter transport. Missing daemon is a normal state.
  */

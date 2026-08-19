@@ -1138,7 +1138,8 @@ async function handleApi(req, res, remoteBroker, workers) {
         );
       }
       if (method === "DELETE") {
-        if (!hasRemote(remoteBroker, id) && !workers?.hasSession(id)) await hub.close(id);
+        if (workers?.hasSession(id)) await workers.release(id);
+        else if (!hasRemote(remoteBroker, id)) await hub.close(id);
         return json(res, 200, { ok: true });
       }
     }

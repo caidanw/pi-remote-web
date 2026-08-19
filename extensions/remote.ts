@@ -5,7 +5,10 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { RemoteClient } from "../remote/client.js";
+import {
+  RemoteClient,
+  requestBrowserTakeover,
+} from "../remote/client.js";
 import { isRecord } from "../remote/protocol.js";
 import {
   acquireSessionLock,
@@ -196,12 +199,32 @@ export default function remoteExtension(pi: ExtensionAPI): void {
 
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) {
-      const acquired = await acquireSessionLock({
+      let acquired = await acquireSessionLock({
         baseDir: lockDir(),
         sessionPath: sessionFile,
         ownerKind: "terminal",
         runtimeId,
       });
+      if (!acquired.ok && acquired.owner?.ownerKind === "browser") {
+        try {
+          await requestBrowserTakeover({
+            socketPath: socketPath(),
+            runtimeId,
+            sessionPath: sessionFile,
+          });
+          acquired = await acquireSessionLock({
+            baseDir: lockDir(),
+            sessionPath: sessionFile,
+            ownerKind: "terminal",
+            runtimeId,
+          });
+        } catch (error) {
+          ctx.ui.notify(
+            error instanceof Error ? error.message : String(error),
+            "error",
+          );
+        }
+      }
       if (!acquired.ok) {
         const owner = acquired.owner?.runtimeId ?? "another Pi process";
         ctx.ui.setStatus("pi-remote", "remote: ownership conflict");

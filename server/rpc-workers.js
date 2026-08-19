@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_MAX_FRAME_BYTES } from "../remote/protocol.js";
 import {
   acquireSessionLock,
   releaseSessionLock,
@@ -12,6 +13,7 @@ import {
 
 const RING_MAX = 500;
 const REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 const RPC_ENTRY = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent/rpc-entry"));
 
 function defaultSessionDir(cwd) {
@@ -52,7 +54,7 @@ function busyState(state, bashRunning = false) {
 /** One isolated `pi --mode rpc` child per browser-owned session. */
 export class RpcWorkerManager {
   /**
-   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string }} [options]
+   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string; shutdownTimeoutMs?: number; maxFrameBytes?: number }} [options]
    */
   constructor(options = {}) {
     this.lockDir = options.lockDir ?? path.join(getAgentDir(), "remote", "locks");
@@ -60,6 +62,8 @@ export class RpcWorkerManager {
     this.spawnProcess = options.spawnProcess ?? spawn;
     this.env = options.env;
     this.sessionDir = options.sessionDir;
+    this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
     /** @type {Map<string, any>} */
     this.workers = new Map();
     /** @type {Map<string, Promise<unknown>>} */
@@ -321,8 +325,35 @@ export class RpcWorkerManager {
   }
 
   /** Stop and relinquish an idle browser owner. */
-  async release(id) {
+  release(id) {
     const worker = this.require(id);
+    worker.releasing = true;
+    return this.#withPath(worker.path, () => this.#releaseWorker(worker)).catch(
+      (error) => {
+        if (worker.running) worker.releasing = false;
+        throw error;
+      },
+    );
+  }
+
+  /** Terminal adapter asks the daemon to stop an idle owner before retrying its lock. */
+  takeover(sessionPath) {
+    const resolved = path.resolve(sessionPath);
+    const currentId = this.findByPath(resolved);
+    const current = currentId ? this.require(currentId) : null;
+    if (current) current.releasing = true;
+    return this.#withPath(resolved, async () => {
+      const id = this.findByPath(resolved);
+      if (!id) return { ok: false, code: "BROWSER_OWNER_NOT_FOUND" };
+      await this.#releaseWorker(this.require(id));
+      return { ok: true };
+    }).catch((error) => {
+      if (current?.running) current.releasing = false;
+      throw error;
+    });
+  }
+
+  async #releaseWorker(worker) {
     if (!worker.running) {
       if (worker.lock) await releaseSessionLock(worker.lock);
       if (worker.lockRelease) await worker.lockRelease;
@@ -330,7 +361,7 @@ export class RpcWorkerManager {
       return { ok: true, path: worker.path };
     }
     worker.releasing = true;
-    if (worker.activeOps > 0) {
+    if (worker.pendingOps > 0) {
       worker.releasing = false;
       const error = new Error("Wait for browser commands to finish before release");
       error.code = "SESSION_BUSY";
@@ -407,16 +438,43 @@ export class RpcWorkerManager {
       lockRelease: null,
       releasing: false,
       activeOps: 0,
+      pendingOps: 0,
+      operationTail: Promise.resolve(),
+      requestTail: Promise.resolve(),
+      protocolError: null,
     };
     let buffer = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      if (worker.protocolError) return;
       buffer += chunk;
+      if (Buffer.byteLength(buffer) > this.maxFrameBytes && !buffer.includes("\n")) {
+        this.#protocolFatal(worker, new Error("Pi RPC frame exceeds size limit"));
+        return;
+      }
       let newline;
       while ((newline = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, newline).replace(/\r$/, "");
         buffer = buffer.slice(newline + 1);
-        if (line) this.#line(worker, line);
+        if (!line) continue;
+        if (Buffer.byteLength(line) > this.maxFrameBytes) {
+          this.#protocolFatal(worker, new Error("Pi RPC frame exceeds size limit"));
+          return;
+        }
+        try {
+          this.#line(worker, JSON.parse(line));
+        } catch (error) {
+          this.#protocolFatal(
+            worker,
+            new Error("Invalid Pi RPC frame", { cause: error }),
+          );
+          return;
+        }
+      }
+    });
+    child.stdout.on("end", () => {
+      if (buffer && worker.running) {
+        this.#protocolFatal(worker, new Error("Pi RPC stdout ended without LF"));
       }
     });
     child.stderr.on("data", (chunk) => {
@@ -424,18 +482,16 @@ export class RpcWorkerManager {
     });
     child.once("error", (error) => this.#exited(worker, error));
     child.once("exit", (code, signal) => {
-      this.#exited(worker, new Error(`Pi RPC worker exited (${code ?? signal ?? "unknown"})`));
+      this.#exited(
+        worker,
+        worker.protocolError ??
+          new Error(`Pi RPC worker exited (${code ?? signal ?? "unknown"})`),
+      );
     });
     return worker;
   }
 
-  #line(worker, line) {
-    let frame;
-    try {
-      frame = JSON.parse(line);
-    } catch {
-      return;
-    }
+  #line(worker, frame) {
     if (frame.type === "response" && frame.id) {
       const pending = worker.requests.get(frame.id);
       if (!pending) return;
@@ -483,17 +539,37 @@ export class RpcWorkerManager {
     }
   }
 
-  async #operation(id, fn) {
+  #operation(id, fn) {
     const worker = this.#running(id);
-    worker.activeOps += 1;
-    try {
-      return await fn(worker);
-    } finally {
-      worker.activeOps -= 1;
-    }
+    worker.pendingOps += 1;
+    const result = worker.operationTail
+      .catch(() => {})
+      .then(async () => {
+        if (!worker.running) throw new Error(`Browser session is not running: ${id}`);
+        if (worker.releasing) throw new Error(`Browser session is releasing: ${id}`);
+        worker.activeOps += 1;
+        try {
+          return await fn(worker);
+        } finally {
+          worker.activeOps -= 1;
+        }
+      })
+      .finally(() => {
+        worker.pendingOps -= 1;
+      });
+    worker.operationTail = result;
+    return result;
   }
 
   #request(worker, command) {
+    const result = worker.requestTail
+      .catch(() => {})
+      .then(() => this.#sendRequest(worker, command));
+    worker.requestTail = result;
+    return result;
+  }
+
+  #sendRequest(worker, command) {
     if (!worker.running || !worker.child.stdin?.writable) {
       return Promise.reject(new Error(`Browser session is not running: ${worker.id}`));
     }
@@ -536,6 +612,12 @@ export class RpcWorkerManager {
     }
   }
 
+  #protocolFatal(worker, error) {
+    if (worker.protocolError) return;
+    worker.protocolError = error;
+    worker.child.kill("SIGKILL");
+  }
+
   #exited(worker, error) {
     if (!worker.running) return;
     worker.running = false;
@@ -555,10 +637,11 @@ export class RpcWorkerManager {
     if (worker.stopping) return worker.stopping;
     worker.stopping = new Promise((resolve) => {
       if (!worker.running || worker.child.exitCode !== null) return resolve();
-      const kill = setTimeout(() => worker.child.kill("SIGTERM"), 2_000);
-      const hardKill = setTimeout(() => worker.child.kill("SIGKILL"), 4_000);
+      const hardKill = setTimeout(
+        () => worker.child.kill("SIGKILL"),
+        this.shutdownTimeoutMs,
+      );
       const done = () => {
-        clearTimeout(kill);
         clearTimeout(hardKill);
         resolve();
       };
