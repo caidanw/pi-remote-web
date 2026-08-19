@@ -1942,6 +1942,19 @@
               <span bind:this={spinEl} class="font-mono text-primary" aria-hidden="true">⠋</span>
               <span>bash</span>
             </div>
+          {:else if busy || sending}
+            <!-- A turn can be accepted before its first assistant message arrives. -->
+            <div
+              class="flex items-center gap-1.5 px-0.5 text-xs text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              <span
+                class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+                aria-hidden="true"
+              ></span>
+              <span>Working…</span>
+            </div>
           {/if}
           {#if error}
             <div class="flex flex-wrap items-center gap-2 text-sm text-destructive">
