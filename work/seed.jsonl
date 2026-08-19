@@ -1,0 +1,3 @@
+{"type": "session", "version": 3, "id": "b11d4da0-bdee-43a3-8179-7e79a888ef9d", "timestamp": "2026-08-19T05:47:11.473389Z", "cwd": "work"}
+{"type": "message", "id": "fe5a77ed", "parentId": null, "timestamp": "2026-08-19T05:47:11.473389Z", "message": {"role": "user", "content": [{"type": "text", "text": "Why is the composer so tall on a phone?"}]}}
+{"type": "message", "id": "358fca3c", "parentId": "fe5a77ed", "timestamp": "2026-08-19T05:47:11.473389Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "Because the textarea height was measured while stretched."}]}}
