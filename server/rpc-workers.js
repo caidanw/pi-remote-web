@@ -5,6 +5,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_MAX_FRAME_BYTES } from "../remote/protocol.js";
+import { assertNoUnregisteredWriter } from "./live-session-guard.js";
 import {
   acquireSessionLock,
   releaseSessionLock,
@@ -54,10 +55,13 @@ function busyState(state, bashRunning = false) {
 /** One isolated `pi --mode rpc` child per browser-owned session. */
 export class RpcWorkerManager {
   /**
-   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string; shutdownTimeoutMs?: number; maxFrameBytes?: number }} [options]
+   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string; shutdownTimeoutMs?: number; maxFrameBytes?: number; guardOptions?: { now?: () => number; recentWriteMs?: number } }} [options]
    */
   constructor(options = {}) {
     this.lockDir = options.lockDir ?? path.join(getAgentDir(), "remote", "locks");
+    this.guardOptions = options.guardOptions;
+    /** Paths this daemon has already owned; reopening them is never a foreign writer. */
+    this.ownedPaths = new Set();
     this.rpcEntry = options.rpcEntry ?? RPC_ENTRY;
     this.spawnProcess = options.spawnProcess ?? spawn;
     this.env = options.env;
@@ -87,7 +91,7 @@ export class RpcWorkerManager {
     return [...this.workers.values()].map((worker) => this.#row(worker));
   }
 
-  /** @param {{ path?: string; cwd?: string; fresh?: boolean }} options */
+  /** @param {{ path?: string; cwd?: string; fresh?: boolean; force?: boolean }} options */
   async open(options = {}) {
     if (this.closing) throw new Error("RPC worker manager is stopping");
     const cwd = path.resolve(options.cwd || process.cwd());
@@ -101,6 +105,15 @@ export class RpcWorkerManager {
       const existingId = this.findByPath(sessionPath);
       const existing = existingId ? this.workers.get(existingId) : null;
       if (existing?.running) return this.#row(existing);
+      if (!created && !this.ownedPaths.has(sessionPath)) {
+        // A Pi session without the adapter holds no lock; recent writes by a
+        // process other than this daemon are the only signal it is still live.
+        await assertNoUnregisteredWriter(sessionPath, {
+          force: options.force,
+          ...this.guardOptions,
+        });
+      }
+      this.ownedPaths.add(sessionPath);
       if (existing) {
         await this.#stop(existing);
         this.workers.delete(existing.id);

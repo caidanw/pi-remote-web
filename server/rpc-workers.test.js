@@ -125,6 +125,8 @@ describe("browser-owned Pi RPC workers", () => {
           PI_TEST_OVERSIZE_BYTES: "2048",
         },
         maxFrameBytes: 1024,
+        // Fixture files are written moments earlier; the live-writer heuristic is tested separately.
+        guardOptions: { recentWriteMs: 0 },
       });
       cleanups.push(async () => {
         await manager.closeAll();
@@ -352,9 +354,11 @@ describe("browser-owned Pi RPC workers", () => {
     assert.ok(lines.length >= 2);
     for (const line of lines) assert.doesNotThrow(() => JSON.parse(line));
 
+    // Fresh manager = daemon restart; the live-writer heuristic must not block a resume.
     const resumed = new RpcWorkerManager({
       rpcEntry: fixtureRpc,
       lockDir: path.join(root, "locks"),
+      guardOptions: { recentWriteMs: 0 },
     });
     cleanups.push(() => resumed.closeAll());
     const reopened = await resumed.open({ cwd: root, path: row.path });

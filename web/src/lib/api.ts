@@ -271,6 +271,8 @@ export function openSession(body: {
   /** Raw pi session JSONL (browser file picker upload). */
   content?: string;
   filename?: string;
+  /** Take over a session that a non-adapter Pi process may still be writing. */
+  force?: boolean;
 }) {
   return req<SessionRow & { modelFallbackMessage?: string }>(`/api/sessions`, {
     method: "POST",
@@ -299,10 +301,18 @@ export function renameSession(id: string, name: string) {
   return patchSession(id, { name });
 }
 
-export function getMessages(id: string) {
-  return req<{ messages: ChatMessage[] }>(
-    `/api/sessions/${encodeURIComponent(id)}/messages`,
-  );
+/**
+ * `limit` returns only the newest messages so a long session opens fast;
+ * the response reports whether older history remains.
+ */
+export function getMessages(id: string, opts?: { limit?: number }) {
+  const query = opts?.limit ? `?limit=${encodeURIComponent(String(opts.limit))}` : "";
+  return req<{
+    messages: ChatMessage[];
+    total?: number;
+    start?: number;
+    hasMore?: boolean;
+  }>(`/api/sessions/${encodeURIComponent(id)}/messages${query}`);
 }
 
 /** Image payload for multimodal prompt/steer/follow-up (pi ImageContent). */

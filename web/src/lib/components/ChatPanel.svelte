@@ -216,6 +216,12 @@
   let progScroll = false;
   /** Long sessions: only paint a tail until user expands. */
   const MSG_WINDOW = 120;
+  /** Transcript bytes fetched up front; older turns page in on demand. */
+  const FETCH_WINDOW = 120;
+  const FETCH_PAGE = 200;
+  let fetchLimit = $state(FETCH_WINDOW);
+  let hasOlderHistory = $state(false);
+  let loadingOlder = $state(false);
   let showAllMsgs = $state(false);
 
   /** Prefill from last session; overwritten when a live session loads. */
@@ -389,6 +395,27 @@
     if (!scroller || progScroll) return;
     const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     stickBottom = gap < 100;
+    if (scroller.scrollTop < 400) void loadOlder();
+  }
+
+  /** Widen the server window; the scroll anchor is kept by pinning scrollHeight. */
+  async function loadOlder() {
+    const id = wiredId;
+    if (!id || loadingOlder || !hasOlderHistory) return;
+    loadingOlder = true;
+    const anchor = scroller ? scroller.scrollHeight - scroller.scrollTop : 0;
+    fetchLimit += FETCH_PAGE;
+    try {
+      await load(id, { force: true, quiet: true });
+      await tick();
+      if (scroller) {
+        progScroll = true;
+        scroller.scrollTop = scroller.scrollHeight - anchor;
+        requestAnimationFrame(() => (progScroll = false));
+      }
+    } finally {
+      loadingOlder = false;
+    }
   }
 
   /** Open / switch session + jump button — never on stream/message updates. */
@@ -884,8 +911,10 @@
       if (!opts?.quiet) scrollBottom();
     }
     try {
-      const { messages: m } = await getMessages(id);
+      const page = await getMessages(id, { limit: fetchLimit });
+      const m = page.messages;
       if (wiredId !== id) return;
+      hasOlderHistory = Boolean(page.hasMore);
       if (stream.isSnapshotting && !opts?.force) return;
       stream.reconcileFromServer(m, { force: opts?.force });
       paintMessages(false);
@@ -973,6 +1002,8 @@
         draftOwner = null;
         draft = readDraft(null);
         messages = [];
+        fetchLimit = FETCH_WINDOW;
+        hasOlderHistory = false;
         workDurations = {};
         lastPromptAt = 0;
         streaming = false;
@@ -1011,6 +1042,8 @@
       wiredId = id;
       dropPending();
       showAllMsgs = false;
+      fetchLimit = FETCH_WINDOW;
+      hasOlderHistory = false;
       failedPrompt = null;
       attachments = [];
       editing = null;
@@ -1721,6 +1754,16 @@
         onscroll={onScroll}
       >
         <div class="mx-auto flex w-full max-w-5xl flex-col gap-5 py-6">
+          {#if hasOlderHistory}
+            <button
+              type="button"
+              class="mx-auto rounded-full border border-border/70 bg-background/80 px-3 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              disabled={loadingOlder}
+              onclick={() => void loadOlder()}
+            >
+              {loadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
+            </button>
+          {/if}
           {#if hiddenMsgCount > 0}
             <button
               type="button"

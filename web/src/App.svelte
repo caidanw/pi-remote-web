@@ -64,6 +64,19 @@
     })(),
   );
 
+  function isNarrowViewport() {
+    try {
+      return window.matchMedia("(max-width: 767px)").matches;
+    } catch {
+      return false;
+    }
+  }
+
+  /** On a phone the sidebar covers the chat, so opening a session must reveal it. */
+  function closeSidebarOnNarrow() {
+    if (isNarrowViewport()) sidebarOpen = false;
+  }
+
   function setSidebarOpen(open: boolean) {
     sidebarOpen = open;
     try {
@@ -201,6 +214,7 @@
   }
 
   async function onSelect(s: SessionRow, opts?: { replaceUrl?: boolean }) {
+    closeSidebarOnNarrow();
     // Already focused — zero network
     if (
       selected &&
@@ -228,7 +242,9 @@
         const opened = await openSession({
           path: s.path,
           cwd: s.cwd || undefined,
+          force: forceOpen?.path === s.path || undefined,
         });
+        forceOpen = null;
         noteFallback(opened);
         const row = { ...s, ...opened, running: true };
         selected = row;
@@ -252,15 +268,21 @@
       if (selected) upsertSession({ ...selected, running: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const code = (e as { code?: string })?.code;
+      if (code === "SESSION_MAYBE_LIVE" && s.path) forceOpen = { path: s.path, row: s };
       if (!/Session not open/i.test(msg)) err = msg;
     } finally {
       opening = false;
     }
   }
 
+  /** Offered when a session looks live in a terminal that never joined the daemon. */
+  let forceOpen = $state<{ path: string; row: SessionRow } | null>(null);
+
   /** Home — no hub session until first prompt. Optional cwd seeds the folder picker. */
   let forceCwd = $state<string | null>(null);
   function onNew(cwd?: string) {
+    closeSidebarOnNarrow();
     err = null;
     forceCwd = cwd ?? null;
     selected = undefined;
@@ -751,9 +773,23 @@
   <div class="flex min-w-0 flex-1 flex-col">
     {#if err}
       <div
-        class="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"
+        class="flex flex-wrap items-center gap-3 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"
       >
-        {err}
+        <span class="min-w-0 flex-1">{err}</span>
+        {#if forceOpen}
+          <button
+            type="button"
+            class="rounded-md border border-destructive/40 px-2 py-1 text-xs"
+            onclick={() => {
+              const target = forceOpen;
+              if (!target) return;
+              err = null;
+              void onSelect(target.row);
+            }}
+          >
+            Open anyway
+          </button>
+        {/if}
       </div>
     {/if}
     {#if warn}

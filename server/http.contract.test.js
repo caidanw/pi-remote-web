@@ -406,6 +406,24 @@ describe("HTTP wire contract", () => {
     }
   });
 
+  it("windows a transcript so long sessions open fast", async () => {
+    const created = await hub.open({ cwd, fresh: true });
+    const all = await api(base, `/api/sessions/${created.id}/messages`);
+    assert.equal(all.res.status, 200);
+    assert.ok(Array.isArray(all.body.messages));
+
+    const windowed = await api(base, `/api/sessions/${created.id}/messages?limit=2`);
+    assert.equal(windowed.res.status, 200);
+    assert.ok(windowed.body.messages.length <= 2);
+    assert.equal(windowed.body.total, all.body.messages.length);
+    assert.equal(
+      windowed.body.hasMore,
+      all.body.messages.length > windowed.body.messages.length,
+    );
+    assert.equal(windowed.body.start, Math.max(0, all.body.messages.length - 2));
+    await hub.close(created.id);
+  });
+
   it("POST /api/sessions/:id/prompt validates body", async () => {
     const empty = await api(base, `/api/sessions/${sessionId}/prompt`, {
       method: "POST",

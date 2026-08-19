@@ -433,6 +433,27 @@ function sessionAction(pathname, suffix) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/**
+ * Transcript window: newest `limit` messages ending at `before`, so a phone can
+ * render a long session immediately and page backwards on scroll.
+ * @param {unknown[]} all
+ * @param {URLSearchParams} searchParams
+ */
+function messagePage(all, searchParams) {
+  const total = all.length;
+  const rawLimit = Number(searchParams.get("limit"));
+  if (!Number.isFinite(rawLimit) || rawLimit <= 0) {
+    return { messages: all, total, start: 0, hasMore: false };
+  }
+  const limit = Math.min(Math.floor(rawLimit), total);
+  const rawBefore = Number(searchParams.get("before"));
+  const end = Number.isFinite(rawBefore)
+    ? Math.max(0, Math.min(Math.floor(rawBefore), total))
+    : total;
+  const start = Math.max(0, end - limit);
+  return { messages: all.slice(start, end), total, start, hasMore: start > 0 };
+}
+
 /** @param {string} pathname @param {string} suffix */
 function remoteSessionAction(pathname, suffix) {
   const m = pathname.match(
@@ -679,7 +700,7 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
 
     let remoteId = remoteSessionAction(pathname, "messages");
     if (method === "GET" && remoteId && remoteBroker) {
-      return json(res, 200, { messages: remoteBroker.getMessages(remoteId) });
+      return json(res, 200, messagePage(remoteBroker.getMessages(remoteId), searchParams));
     }
 
     remoteId = remoteSessionAction(pathname, "prompt");
@@ -832,6 +853,7 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
             path: body.path,
             cwd: body.cwd,
             fresh: body.fresh ?? !body.path,
+            force: body.force === true,
           })
         : await hub.open({
             path: body.path,
@@ -872,11 +894,11 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
     id = sessionAction(pathname, "messages");
     if (method === "GET" && id) {
       if (hasRemote(remoteBroker, id)) {
-        return json(res, 200, { messages: remoteBroker.getMessages(id) });
+        return json(res, 200, messagePage(remoteBroker.getMessages(id), searchParams));
       }
       const source = localSource(workers, id);
       const s = await source.ensure(id);
-      return json(res, 200, { messages: source.getMessages(s.id) });
+      return json(res, 200, messagePage(source.getMessages(s.id), searchParams));
     }
 
     // POST /api/sessions/:id/prompt  { message, images? }
