@@ -15,6 +15,7 @@ import {
   connectedPayload,
   shouldReplayRing,
 } from "./sse-protocol.js";
+import { messagePage } from "./message-window.js";
 
 /**
  * Host lifecycle for /api/shutdown (extension stays alive while the host closes).
@@ -431,27 +432,6 @@ function sessionAction(pathname, suffix) {
     new RegExp(`^/api/sessions/([^/]+)/${suffix}$`),
   );
   return m ? decodeURIComponent(m[1]) : null;
-}
-
-/**
- * Transcript window: newest `limit` messages ending at `before`, so a phone can
- * render a long session immediately and page backwards on scroll.
- * @param {unknown[]} all
- * @param {URLSearchParams} searchParams
- */
-function messagePage(all, searchParams) {
-  const total = all.length;
-  const rawLimit = Number(searchParams.get("limit"));
-  if (!Number.isFinite(rawLimit) || rawLimit <= 0) {
-    return { messages: all, total, start: 0, hasMore: false };
-  }
-  const limit = Math.min(Math.floor(rawLimit), total);
-  const rawBefore = Number(searchParams.get("before"));
-  const end = Number.isFinite(rawBefore)
-    ? Math.max(0, Math.min(Math.floor(rawBefore), total))
-    : total;
-  const start = Math.max(0, end - limit);
-  return { messages: all.slice(start, end), total, start, hasMore: start > 0 };
 }
 
 /** @param {string} pathname @param {string} suffix */

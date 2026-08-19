@@ -414,7 +414,11 @@ describe("HTTP wire contract", () => {
 
     const windowed = await api(base, `/api/sessions/${created.id}/messages?limit=2`);
     assert.equal(windowed.res.status, 200);
-    assert.ok(windowed.body.messages.length <= 2);
+    assert.equal(
+      windowed.body.messages.length,
+      Math.min(2, all.body.messages.length),
+      "a limit must never empty the transcript",
+    );
     assert.equal(windowed.body.total, all.body.messages.length);
     assert.equal(
       windowed.body.hasMore,

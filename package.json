@@ -41,6 +41,7 @@
     "server/rpc-workers.js",
     "server/worktrees.js",
     "server/live-session-guard.js",
+    "server/message-window.js",
     "server/skill-workspace.js",
     "server/sse-protocol.js",
     "remote/client.js",
@@ -69,8 +70,8 @@
     "build:docs": "npm run build --prefix docs",
     "check": "npm run check --prefix web",
     "check:docs": "npm run check --prefix docs",
-    "smoke": "node --input-type=module -e \"await import('./server/auth.js'); await import('./server/qr.js'); await import('./server/service.js'); await import('./server/hub.js'); await import('./server/http.js'); await import('./server/remote-broker.js'); await import('./server/rpc-workers.js'); await import('./server/live-session-guard.js'); await import('./server/worktrees.js'); await import('./remote/client.js'); await import('./remote/session-lock.js'); console.log('smoke ok')\"",
-    "test": "npm run smoke && node --test remote/protocol.test.js remote/session-lock.test.js server/auth.test.js server/qr.test.js server/service.test.js server/remote-broker.test.js server/rpc-workers.test.js server/live-session-guard.test.js server/worktrees.test.js server/stabilize.test.js server/sse-protocol.test.js server/http.contract.test.js server/skill-workspace.test.js server/test-temp.test.js server/customization.test.js && node --experimental-strip-types --test web/src/lib/auth-bootstrap.test.ts web/src/lib/autosize.test.ts web/src/lib/chat-stream.test.ts web/src/lib/special-message.test.ts web/src/lib/tool-presentation.test.ts web/src/lib/work-section.test.ts extensions/web.test.ts extensions/remote.test.ts",
+    "smoke": "node --input-type=module -e \"await import('./server/auth.js'); await import('./server/qr.js'); await import('./server/service.js'); await import('./server/hub.js'); await import('./server/http.js'); await import('./server/remote-broker.js'); await import('./server/rpc-workers.js'); await import('./server/live-session-guard.js'); await import('./server/message-window.js'); await import('./server/worktrees.js'); await import('./remote/client.js'); await import('./remote/session-lock.js'); console.log('smoke ok')\"",
+    "test": "npm run smoke && node --test remote/protocol.test.js remote/session-lock.test.js server/auth.test.js server/qr.test.js server/service.test.js server/remote-broker.test.js server/rpc-workers.test.js server/live-session-guard.test.js server/message-window.test.js server/worktrees.test.js server/stabilize.test.js server/sse-protocol.test.js server/http.contract.test.js server/skill-workspace.test.js server/test-temp.test.js server/customization.test.js && node --experimental-strip-types --test web/src/lib/auth-bootstrap.test.ts web/src/lib/autosize.test.ts web/src/lib/chat-stream.test.ts web/src/lib/special-message.test.ts web/src/lib/tool-presentation.test.ts web/src/lib/work-section.test.ts extensions/web.test.ts extensions/remote.test.ts",
     "prepack": "npm test && npm run build"
   },
   "pi": {

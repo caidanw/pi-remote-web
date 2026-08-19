@@ -759,16 +759,25 @@
 
 <div class="flex h-svh w-full overflow-hidden bg-background text-foreground">
   {#if sidebarOpen}
-    <SessionList
-      {sessions}
-      selectedId={selected?.id}
-      {listReady}
-      onSelect={onSelect}
-      onNew={onNew}
-      onNewWorktree={() => (worktreeDialogOpen = true)}
-      onCollapse={() => setSidebarOpen(false)}
-      onOpenPalette={() => (cmdkOpen = true)}
-    />
+    <!-- Phones: overlay the chat and dim it; tablets and up keep the split layout. -->
+    <button
+      type="button"
+      class="fixed inset-0 z-40 bg-black/50 md:hidden"
+      aria-label="Close sessions sidebar"
+      onclick={() => setSidebarOpen(false)}
+    ></button>
+    <div class="fixed inset-y-0 left-0 z-50 flex md:static md:z-auto">
+      <SessionList
+        {sessions}
+        selectedId={selected?.id}
+        {listReady}
+        onSelect={onSelect}
+        onNew={onNew}
+        onNewWorktree={() => (worktreeDialogOpen = true)}
+        onCollapse={() => setSidebarOpen(false)}
+        onOpenPalette={() => (cmdkOpen = true)}
+      />
+    </div>
   {/if}
   <div class="flex min-w-0 flex-1 flex-col">
     {#if err}
@@ -861,11 +870,19 @@
     />
   </div>
   {#if gitSidebarOpen && !selected?.remote}
-    <GitDiffSidebar
-      sessionId={selected?.running ? selected.id : undefined}
-      cwd={selected?.cwd}
-      onCollapse={() => setGitSidebarOpen(false)}
-    />
+    <button
+      type="button"
+      class="fixed inset-0 z-40 bg-black/50 md:hidden"
+      aria-label="Close git changes sidebar"
+      onclick={() => setGitSidebarOpen(false)}
+    ></button>
+    <div class="fixed inset-y-0 right-0 z-50 flex md:static md:z-auto">
+      <GitDiffSidebar
+        sessionId={selected?.running ? selected.id : undefined}
+        cwd={selected?.cwd}
+        onCollapse={() => setGitSidebarOpen(false)}
+      />
+    </div>
   {/if}
 </div>
 
