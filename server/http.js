@@ -24,6 +24,61 @@ const hostCtl = { stayAlive: false, close: null };
 
 /** @typedef {import("./remote-broker.js").RemoteBroker} RemoteBroker */
 
+function remoteRow(broker, session) {
+  if (typeof broker?.getSessionRow === "function") {
+    return broker.getSessionRow(session.runtimeId);
+  }
+  const meta = session.snapshot?.session ?? session.registration?.session ?? {};
+  const messages = Array.isArray(session.snapshot?.messages) ? session.snapshot.messages : [];
+  return {
+    ...meta,
+    id: session.runtimeId,
+    runtimeId: session.runtimeId,
+    remote: true,
+    bound: true,
+    running: true,
+    connected: Boolean(session.connected),
+    streaming: Boolean(meta.streaming),
+    messageCount: messages.length,
+  };
+}
+
+export function mergeRemoteSessions(local, broker) {
+  if (!broker) return local;
+  const remote = broker.listSessions().map((session) => remoteRow(broker, session));
+  const paths = new Set(remote.map((row) => row.path).filter(Boolean));
+  const ids = new Set(
+    broker.listSessions().map((session) => session.registration?.session?.id).filter(Boolean),
+  );
+  return [
+    ...remote,
+    ...local.filter((row) => !paths.has(row.path) && !ids.has(row.id)),
+  ];
+}
+
+function hasRemote(broker, id) {
+  if (!broker) return false;
+  if (typeof broker.hasSession === "function") return broker.hasSession(id);
+  return broker.listSessions().some((session) => session.runtimeId === id);
+}
+
+const REMOTE_UNSUPPORTED_ACTIONS = new Set([
+  "command",
+  "scoped-models",
+  "share",
+  "trust",
+  "tree",
+  "fork",
+  "bash",
+  "abort-bash",
+  "tools",
+  "skills",
+  "skill-file",
+  "extensions",
+  "commands",
+  "git",
+]);
+
 /** @param {unknown} images */
 function hasImages(images) {
   return Array.isArray(images) && images.length > 0;
@@ -439,6 +494,13 @@ async function handleApi(req, res, remoteBroker) {
     // GET /api/models?sessionId=
     if (method === "GET" && pathname === "/api/models") {
       const sessionId = searchParams.get("sessionId") || undefined;
+      if (sessionId && hasRemote(remoteBroker, sessionId)) {
+        return json(
+          res,
+          200,
+          await remoteBroker.command(sessionId, "list_models"),
+        );
+      }
       return json(res, 200, { models: await hub.listModels(sessionId) });
     }
 
@@ -535,13 +597,15 @@ async function handleApi(req, res, remoteBroker) {
     // GET /api/sessions?cwd=
     if (method === "GET" && pathname === "/api/sessions") {
       const cwd = searchParams.get("cwd") || undefined;
-      const sessions = await hub.list(cwd);
+      const sessions = mergeRemoteSessions(await hub.list(cwd), remoteBroker);
       return json(res, 200, { sessions });
     }
 
     // POST /api/sessions  { path?, cwd?, fresh?, content?, filename? }
     if (method === "POST" && pathname === "/api/sessions") {
       const body = await readJson(req);
+      const remoteId = body.path && remoteBroker?.findByPath?.(body.path);
+      if (remoteId) return json(res, 200, remoteBroker.getSessionRow(remoteId));
       const opened = await hub.open({
         path: body.path,
         content: body.content,
@@ -554,9 +618,24 @@ async function handleApi(req, res, remoteBroker) {
 
     // --- session sub-routes (more specific first) ---
 
+    const remoteAction = pathname.match(/^\/api\/sessions\/([^/]+)\/([^/]+)$/);
+    if (remoteAction) {
+      const remoteId = decodeURIComponent(remoteAction[1]);
+      const action = remoteAction[2];
+      if (hasRemote(remoteBroker, remoteId) && REMOTE_UNSUPPORTED_ACTIONS.has(action)) {
+        return json(res, 409, {
+          error: `${action} is unavailable for terminal-owned sessions`,
+          code: "REMOTE_UNSUPPORTED",
+        });
+      }
+    }
+
     // GET /api/sessions/:id/messages
     let id = sessionAction(pathname, "messages");
     if (method === "GET" && id) {
+      if (hasRemote(remoteBroker, id)) {
+        return json(res, 200, { messages: remoteBroker.getMessages(id) });
+      }
       const s = await hub.ensure(id);
       return json(res, 200, { messages: hub.getMessages(s.id) });
     }
@@ -570,6 +649,13 @@ async function handleApi(req, res, remoteBroker) {
       }
       if (!body.message.trim() && !hasImages(body.images)) {
         return json(res, 400, { error: "message required" });
+      }
+      if (hasRemote(remoteBroker, id)) {
+        await remoteBroker.command(id, "prompt", {
+          message: body.message,
+          images: body.images,
+        });
+        return json(res, 202, { ok: true, id });
       }
       const s = await hub.ensure(id);
       // 202 fire-and-forget; hub.#failTurn emits error + agent_settled on failure
@@ -599,8 +685,11 @@ async function handleApi(req, res, remoteBroker) {
     // POST /api/sessions/:id/abort
     id = sessionAction(pathname, "abort");
     if (method === "POST" && id) {
-      const s = await hub.ensure(id);
-      await hub.abort(s.id);
+      if (hasRemote(remoteBroker, id)) await remoteBroker.command(id, "abort");
+      else {
+        const s = await hub.ensure(id);
+        await hub.abort(s.id);
+      }
       return json(res, 200, { ok: true });
     }
 
@@ -608,6 +697,17 @@ async function handleApi(req, res, remoteBroker) {
     id = sessionAction(pathname, "model");
     if (method === "POST" && id) {
       const body = await readJson(req);
+      if (hasRemote(remoteBroker, id)) {
+        if (body.cycle === "forward" || body.cycle === "backward") {
+          await remoteBroker.command(id, "cycle_model", { direction: body.cycle });
+        } else {
+          await remoteBroker.command(id, "set_model", {
+            provider: body.provider,
+            id: body.id,
+          });
+        }
+        return json(res, 200, remoteBroker.getSessionRow(id));
+      }
       return json(res, 200, await hub.setModel(id, body));
     }
 
@@ -652,10 +752,25 @@ async function handleApi(req, res, remoteBroker) {
     // GET|POST /api/sessions/:id/thinking
     id = sessionAction(pathname, "thinking");
     if (method === "GET" && id) {
+      if (hasRemote(remoteBroker, id)) {
+        return json(res, 200, await remoteBroker.command(id, "get_thinking"));
+      }
       return json(res, 200, hub.getThinking(id));
     }
     if (method === "POST" && id) {
       const body = await readJson(req);
+      if (hasRemote(remoteBroker, id)) {
+        const result = body.cycle
+          ? await remoteBroker.command(id, "cycle_thinking")
+          : await remoteBroker.command(id, "set_thinking", { level: body.level });
+        const row = remoteBroker.getSessionRow(id);
+        return json(res, 200, {
+          level: row.thinkingLevel,
+          available: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+          supports: Boolean(row.model?.reasoning),
+          result,
+        });
+      }
       return json(res, 200, hub.setThinking(id, body));
     }
 
@@ -663,6 +778,12 @@ async function handleApi(req, res, remoteBroker) {
     id = sessionAction(pathname, "compact");
     if (method === "POST" && id) {
       const body = await readJson(req);
+      if (hasRemote(remoteBroker, id)) {
+        await remoteBroker.command(id, "compact", {
+          instructions: body.instructions,
+        });
+        return json(res, 202, { ok: true, id });
+      }
       return json(res, 200, await hub.compact(id, body.instructions));
     }
 
@@ -712,6 +833,13 @@ async function handleApi(req, res, remoteBroker) {
       if (!body.message.trim() && !hasImages(body.images)) {
         return json(res, 400, { error: "message required" });
       }
+      if (hasRemote(remoteBroker, id)) {
+        await remoteBroker.command(id, "steer", {
+          message: body.message,
+          images: body.images,
+        });
+        return json(res, 202, { ok: true, id });
+      }
       const s = await hub.ensure(id);
       hub.steer(s.id, body.message, body.images).catch((err) => {
         console.error("[pi-remote-web] steer error", s.id, err);
@@ -728,6 +856,13 @@ async function handleApi(req, res, remoteBroker) {
       }
       if (!body.message.trim() && !hasImages(body.images)) {
         return json(res, 400, { error: "message required" });
+      }
+      if (hasRemote(remoteBroker, id)) {
+        await remoteBroker.command(id, "follow_up", {
+          message: body.message,
+          images: body.images,
+        });
+        return json(res, 200, { ok: true, id });
       }
       const s = await hub.ensure(id);
       await hub.followUp(s.id, body.message, body.images);
@@ -845,10 +980,12 @@ async function handleApi(req, res, remoteBroker) {
     // Resume: ring events with seq > after, then live
     id = sessionAction(pathname, "events");
     if (method === "GET" && id) {
-      const s = await hub.ensure(id);
-      const hubId = s.id;
+      const remote = hasRemote(remoteBroker, id);
+      const s = remote ? null : await hub.ensure(id);
+      const hubId = remote ? id : s.id;
+      const source = remote ? remoteBroker : hub;
       const afterSeq = lastEventIdFrom(req, searchParams);
-      const { seq: headSeq, ringStart } = hub.ringInfo(hubId);
+      const { seq: headSeq, ringStart } = source.ringInfo(hubId);
       const replay = shouldReplayRing(afterSeq, ringStart);
       // No socket idle kill on long-lived event streams
       req.socket?.setTimeout(0);
@@ -885,13 +1022,18 @@ async function handleApi(req, res, remoteBroker) {
       };
 
       // Subscribe first so live events during snapshot/replay are not lost
-      const unsub = hub.subscribe(hubId, (event, seq) => {
-        if (replaying) pending.push({ event, seq });
-        else write(event, seq);
-      });
+      const unsub = remote
+        ? source.subscribeSession(hubId, (event, seq) => {
+            if (replaying) pending.push({ event, seq });
+            else write(event, seq);
+          })
+        : source.subscribe(hubId, (event, seq) => {
+            if (replaying) pending.push({ event, seq });
+            else write(event, seq);
+          });
 
       if (replay) {
-        for (const x of hub.eventsAfter(hubId, afterSeq)) {
+        for (const x of source.eventsAfter(hubId, afterSeq)) {
           write(x.event, x.seq);
         }
       }
@@ -925,6 +1067,9 @@ async function handleApi(req, res, remoteBroker) {
     if (sessionMatch) {
       id = decodeURIComponent(sessionMatch[1]);
       if (method === "GET") {
+        if (hasRemote(remoteBroker, id)) {
+          return json(res, 200, remoteBroker.getSessionRow(id));
+        }
         const s = await hub.ensure(id);
         return json(res, 200, hub.get(s.id));
       }
@@ -934,12 +1079,20 @@ async function handleApi(req, res, remoteBroker) {
           if (typeof body.name !== "string") {
             return json(res, 400, { error: "name must be string" });
           }
+          if (hasRemote(remoteBroker, id)) {
+            await remoteBroker.command(id, "rename", { name: body.name });
+            return json(res, 200, remoteBroker.getSessionRow(id));
+          }
           return json(res, 200, hub.setName(id, body.name));
         }
-        return json(res, 200, hub.get(id));
+        return json(
+          res,
+          200,
+          hasRemote(remoteBroker, id) ? remoteBroker.getSessionRow(id) : hub.get(id),
+        );
       }
       if (method === "DELETE") {
-        await hub.close(id);
+        if (!hasRemote(remoteBroker, id)) await hub.close(id);
         return json(res, 200, { ok: true });
       }
     }

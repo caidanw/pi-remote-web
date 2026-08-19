@@ -150,6 +150,7 @@
     /** pi builtin slash (`/model`, `/compact`, …). */
     onBuiltinSlash?: (name: string) => void;
     onRequestFork?: (candidate: ForkCandidate) => void;
+    onTerminalSwitch?: (previous: Partial<SessionRow>) => void;
     treeNavigation?: {
       token: number;
       sessionId: string;
@@ -170,6 +171,7 @@
     onEnsureSession,
     onBuiltinSlash,
     onRequestFork,
+    onTerminalSwitch,
     treeNavigation = null,
     showExpandSidebar = false,
     showExpandGit = false,
@@ -280,7 +282,19 @@
   const slashCmds = $derived.by(() => {
     const remote = slashRemote;
     const taken = new Set(remote.map((c) => c.name));
+    const unavailable = new Set([
+      "bash",
+      "clone",
+      "extensions",
+      "fork",
+      "scoped-models",
+      "share",
+      "skills",
+      "tree",
+      "trust",
+    ]);
     const builtins = BUILTIN_SLASH_COMMANDS.filter((b) => {
+      if (session?.remote && unavailable.has(b.name)) return false;
       if (taken.has(b.name)) return false;
       if (b.needsSession === false) return true;
       return Boolean(session?.id);
@@ -490,6 +504,12 @@
           void load(id, { force: true, quiet: true });
           void catchUp(id);
           break;
+        case "refresh_snapshot":
+          void load(id, { force: true, quiet: true });
+          if (ef.truncated) {
+            error = `Transcript snapshot omitted ${ef.droppedMessages ?? "some"} older messages`;
+          }
+          break;
         case "messages":
           paint = true;
           break;
@@ -526,6 +546,25 @@
               name: ef.name,
               sessionName: ef.name,
             });
+          }
+          break;
+        case "session_meta":
+          if (wiredId) {
+            const next = ef.session as Partial<SessionRow>;
+            onSessionUpdate?.(wiredId, {
+              path: next.path,
+              cwd: next.cwd,
+              name: next.name,
+              sessionName: next.name,
+              model: next.model,
+              thinkingLevel: next.thinkingLevel,
+              streaming: next.streaming,
+              connected: next.connected,
+              running: next.running,
+            });
+            if (ef.previousSession) {
+              onTerminalSwitch?.(ef.previousSession as Partial<SessionRow>);
+            }
           }
           break;
         case "compacting":
@@ -1258,6 +1297,11 @@
 
     // pi-tui: !cmd / !!cmd (exclude from context)
     if (body.startsWith("!")) {
+      if (session?.remote) {
+        error = "Bash is unavailable for live terminal sessions";
+        sending = false;
+        return;
+      }
       const exclude = body.startsWith("!!");
       const command = (exclude ? body.slice(2) : body.slice(1)).trim();
       if (!command) {
@@ -1441,7 +1485,9 @@
         : "Bash"
       : streaming
         ? "Steer (Enter) · follow-up (⌥Enter)"
-        : "Message pi  (/ commands · ! bash)",
+        : session?.remote
+          ? "Message pi  (/ commands)"
+          : "Message pi  (/ commands · ! bash)",
   );
 
   /** Home / empty chat: centered prompt (Cursor-style). */
@@ -1595,7 +1641,9 @@
           class={promptBoxClass}
           bind:value={draft}
           {attachments}
-          placeholder="Describe a task · / commands · ! bash"
+          placeholder={session?.remote
+            ? "Describe a task · / commands"
+            : "Describe a task · / commands · ! bash"}
           textareaClass="min-h-[56px] text-[15px]"
           isLoading={sending}
           {canSend}
@@ -1727,8 +1775,8 @@
                     message={m}
                     messages={messages}
                     index={i}
-                    onEditUser={() => editUserMessage(m, i)}
-                    onForkUser={forkUserMessage}
+                    onEditUser={session?.remote ? undefined : () => editUserMessage(m, i)}
+                    onForkUser={session?.remote ? undefined : forkUserMessage}
                     sticky={true}
                   />
                 {/if}

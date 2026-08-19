@@ -1,5 +1,5 @@
 import net from "node:net";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -11,11 +11,24 @@ import {
 
 /** @typedef {{ socket: import("node:net").Socket; runtimeId: string | null }} Peer */
 
+function sessionIdentity(frame) {
+  const session = isRecord(frame?.session) ? frame.session : {};
+  return String(session.path || session.id || "");
+}
+
+function snapshotKey(frame) {
+  return createHash("sha256").update(JSON.stringify(frame)).digest("base64url");
+}
+
+const DEFAULT_RECONNECT_GRACE_MS = 30_000;
+
 export class RemoteBroker {
-  /** @param {{ socketPath: string }} options */
-  constructor({ socketPath }) {
+  /** @param {{ socketPath: string; reconnectGraceMs?: number }} options */
+  constructor({ socketPath, reconnectGraceMs = DEFAULT_RECONNECT_GRACE_MS }) {
     this.socketPath = socketPath;
+    this.reconnectGraceMs = reconnectGraceMs;
     this.server = null;
+    this.closing = false;
     /** @type {Map<string, { runtimeId: string; connected: boolean; registration?: Record<string, unknown>; snapshot?: Record<string, unknown>; lastEvent?: unknown; peer?: Peer; seq: number; ring: { seq: number, event: unknown }[]; listeners: Set<(event: unknown, seq: number) => void> }>} */
     this.sessions = new Map();
     /** @type {Set<() => void>} */
@@ -24,10 +37,13 @@ export class RemoteBroker {
     this.sockets = new Set();
     /** @type {Map<string, { runtimeId: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>} */
     this.pendingCommands = new Map();
+    /** @type {Map<string, Promise<unknown>>} */
+    this.commandTails = new Map();
   }
 
   async listen() {
     if (this.server) return;
+    this.closing = false;
     await mkdir(path.dirname(this.socketPath), { recursive: true, mode: 0o700 });
     await chmod(path.dirname(this.socketPath), 0o700);
     await this.#removeStaleSocket();
@@ -47,14 +63,19 @@ export class RemoteBroker {
   async close() {
     const server = this.server;
     if (!server) return;
+    this.closing = true;
     this.server = null;
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
+    for (const session of this.sessions.values()) {
+      if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
+    }
     for (const pending of this.pendingCommands.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error("remote broker stopped"));
     }
     this.pendingCommands.clear();
+    this.commandTails.clear();
     if (server) {
       await new Promise((resolve) => server.close(() => resolve(undefined)));
     }
@@ -68,10 +89,54 @@ export class RemoteBroker {
   }
 
   /** @param {string} runtimeId */
+  hasSession(runtimeId) {
+    return this.sessions.has(runtimeId);
+  }
+
+  /** @param {string} sessionPath */
+  findByPath(sessionPath) {
+    for (const session of this.sessions.values()) {
+      if (session.registration?.session?.path === sessionPath) return session.runtimeId;
+    }
+    return null;
+  }
+
+  /** @param {string} runtimeId */
   getSession(runtimeId) {
     const session = this.sessions.get(runtimeId);
     if (!session) throw new Error(`Remote session not found: ${runtimeId}`);
     return this.#publicSession(session);
+  }
+
+  /** Existing browser SessionRow contract for a terminal-owned runtime. */
+  getSessionRow(runtimeId) {
+    const session = this.sessions.get(runtimeId);
+    if (!session) throw new Error(`Remote session not found: ${runtimeId}`);
+    const registered = isRecord(session.registration?.session)
+      ? session.registration.session
+      : {};
+    const snap = isRecord(session.snapshot?.session) ? session.snapshot.session : {};
+    const current = { ...registered, ...snap };
+    const messages = Array.isArray(session.snapshot?.messages)
+      ? session.snapshot.messages
+      : [];
+    return {
+      id: runtimeId,
+      runtimeId,
+      remote: true,
+      bound: true,
+      running: session.connected,
+      connected: session.connected,
+      path: current.path,
+      cwd: current.cwd,
+      name: current.name,
+      sessionName: current.name,
+      streaming: Boolean(current.streaming),
+      thinkingLevel: current.thinkingLevel,
+      messageCount: messages.length,
+      modified: session.updatedAt,
+      model: current.model,
+    };
   }
 
   /** @param {string} runtimeId */
@@ -116,6 +181,18 @@ export class RemoteBroker {
    * @param {number} [timeoutMs]
    */
   command(runtimeId, command, payload, timeoutMs = 10_000) {
+    const previous = this.commandTails.get(runtimeId) ?? Promise.resolve();
+    const result = previous.catch(() => {}).then(() =>
+      this.#sendCommand(runtimeId, command, payload, timeoutMs),
+    );
+    this.commandTails.set(runtimeId, result);
+    result.finally(() => {
+      if (this.commandTails.get(runtimeId) === result) this.commandTails.delete(runtimeId);
+    }).catch(() => {});
+    return result;
+  }
+
+  #sendCommand(runtimeId, command, payload, timeoutMs) {
     const session = this.sessions.get(runtimeId);
     if (!session?.connected || !session.peer) {
       return Promise.reject(new Error(`Remote session is not connected: ${runtimeId}`));
@@ -180,7 +257,17 @@ export class RemoteBroker {
       if (session?.peer !== peer) return;
       session.connected = false;
       delete session.peer;
+      if (this.closing) return;
+      this.#emit(session, { type: "remote_connection", connected: false });
       this.#rejectCommands(peer.runtimeId, "Remote session disconnected");
+      if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
+      session.disconnectTimer = setTimeout(() => {
+        if (this.sessions.get(peer.runtimeId) !== session || session.connected) return;
+        this.sessions.delete(peer.runtimeId);
+        this.commandTails.delete(peer.runtimeId);
+        this.#notify();
+      }, this.reconnectGraceMs);
+      session.disconnectTimer.unref?.();
       this.#notify();
     });
   }
@@ -201,19 +288,36 @@ export class RemoteBroker {
 
     if (frame.type === "register") {
       const previous = this.sessions.get(frame.runtimeId);
+      const reconnecting = Boolean(previous && !previous.connected);
+      if (previous?.disconnectTimer) clearTimeout(previous.disconnectTimer);
       if (previous?.peer && previous.peer !== peer) previous.peer.socket.destroy();
       peer.runtimeId = frame.runtimeId;
-      this.sessions.set(frame.runtimeId, {
+      const replacement = previous &&
+        sessionIdentity(previous.registration) &&
+        sessionIdentity(previous.registration) !== sessionIdentity(frame);
+      const next = {
         runtimeId: frame.runtimeId,
         connected: true,
         registration: frame,
-        snapshot: previous?.snapshot,
+        snapshot: replacement ? undefined : previous?.snapshot,
         lastEvent: previous?.lastEvent,
         seq: previous?.seq ?? 0,
         ring: previous?.ring ?? [],
         listeners: previous?.listeners ?? new Set(),
         peer,
-      });
+        snapshotKey: replacement ? undefined : previous?.snapshotKey,
+        updatedAt: new Date().toISOString(),
+      };
+      this.sessions.set(frame.runtimeId, next);
+      if (replacement) {
+        this.#emit(next, {
+          type: "session_replaced",
+          previousSession: previous.registration?.session,
+          session: frame.session,
+        });
+      } else if (reconnecting) {
+        this.#emit(next, { type: "remote_connection", connected: true });
+      }
       peer.socket.write(encodeFrame({
         protocol: REMOTE_PROTOCOL_VERSION,
         type: "registered",
@@ -234,16 +338,58 @@ export class RemoteBroker {
       else pending.reject(new Error(String(frame.error ?? "Remote command failed")));
       return;
     }
-    if (frame.type === "snapshot") session.snapshot = frame;
+    if (frame.type === "snapshot") {
+      const key = snapshotKey(frame);
+      session.snapshot = frame;
+      session.updatedAt = new Date().toISOString();
+      if (key !== session.snapshotKey) {
+        session.snapshotKey = key;
+        this.#emit(session, {
+          type: "snapshot_available",
+          session: frame.session,
+          truncated: Boolean(frame.truncated),
+          droppedMessages: frame.droppedMessages,
+        });
+      }
+    }
     if (frame.type === "event") {
       session.lastEvent = frame.event;
-      session.seq += 1;
-      session.ring.push({ seq: session.seq, event: frame.event });
-      if (session.ring.length > 500) session.ring.splice(0, session.ring.length - 500);
-      for (const listener of session.listeners) listener(frame.event, session.seq);
+      session.updatedAt = new Date().toISOString();
+      this.#projectEvent(session, frame.event);
+      this.#emit(session, frame.event);
     }
-    if (frame.type === "resync_required") session.snapshot = undefined;
+    if (frame.type === "resync_required") {
+      this.#emit(session, {
+        type: "resync_required",
+        reason: frame.reason,
+      });
+    }
     this.#notify();
+  }
+
+  #emit(session, event) {
+    session.seq += 1;
+    session.ring.push({ seq: session.seq, event });
+    if (session.ring.length > 500) session.ring.splice(0, session.ring.length - 500);
+    for (const listener of session.listeners) listener(event, session.seq);
+  }
+
+  #projectEvent(session, event) {
+    if (!isRecord(event)) return;
+    if (!isRecord(session.snapshot)) session.snapshot = { messages: [] };
+    if (!isRecord(session.snapshot.session)) session.snapshot.session = {};
+    const meta = session.snapshot.session;
+    if (event.type === "agent_start") meta.streaming = true;
+    if (event.type === "agent_settled") meta.streaming = false;
+    if (event.type === "model_select" && isRecord(event.model)) {
+      meta.model = {
+        provider: event.model.provider,
+        id: event.model.id,
+        name: event.model.name,
+      };
+    }
+    if (event.type === "thinking_level_select") meta.thinkingLevel = event.level;
+    if (event.type === "session_info_changed") meta.name = event.name;
   }
 
   #publicSession(session) {

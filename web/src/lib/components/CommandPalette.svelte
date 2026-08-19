@@ -508,11 +508,11 @@
       {
         id: "set-scoped-models",
         label: "Scoped models",
-        caption: hasSession ? undefined : "Open a session first",
+        caption: session?.remote ? "Unavailable for live terminals" : hasSession ? undefined : "Open a session first",
         category: "Agent",
         icon: Cpu,
         keywords: "settings scoped models cycle ctrl+p allowlist",
-        disabled: !hasSession,
+        disabled: !hasSession || Boolean(session?.remote),
         action: () => {
           if (!session?.id) return;
           openScopedModels();
@@ -534,11 +534,11 @@
       {
         id: "set-skills",
         label: "Skills",
-        caption: hasSession ? undefined : "Open a session first",
+        caption: session?.remote ? "Unavailable for live terminals" : hasSession ? undefined : "Open a session first",
         category: "Agent",
         icon: Sparkles,
         keywords: "settings skills",
-        disabled: !hasSession,
+        disabled: !hasSession || Boolean(session?.remote),
         action: () => {
           if (!session?.id) return;
           openSkills();
@@ -547,11 +547,11 @@
       {
         id: "set-extensions",
         label: "Extensions",
-        caption: hasSession ? undefined : "Open a session first",
+        caption: session?.remote ? "Unavailable for live terminals" : hasSession ? undefined : "Open a session first",
         category: "Agent",
         icon: Blocks,
         keywords: "settings extensions plugins",
-        disabled: !hasSession,
+        disabled: !hasSession || Boolean(session?.remote),
         action: () => {
           if (!session?.id) return;
           openExtensions();
@@ -1614,7 +1614,19 @@ h3{margin:1.5rem 0 0.5rem;text-transform:capitalize}</style></head><body>
       });
     }
 
-    return cmds;
+    if (!session?.remote) return cmds;
+    const hidden = new Set([
+      "share",
+      "close-session",
+      "scoped-models",
+      "skills",
+      "extensions",
+      "tree",
+      "fork",
+    ]);
+    return cmds.filter((command) =>
+      !hidden.has(command.id) && !command.id.startsWith("slash-"),
+    );
   }
 
   function formatModified(d?: string | Date): string {

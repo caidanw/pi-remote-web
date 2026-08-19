@@ -32,13 +32,32 @@ describe("remote extension", () => {
 
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const statuses: string[] = [];
-    const remotePrompts: string[] = [];
+    const remotePrompts: { message: unknown; options?: unknown }[] = [];
+    const selectedModels: string[] = [];
+    const renamed: string[] = [];
+    let thinking = "medium";
+    let aborted = false;
+    let compacted = false;
+    const models = [
+      { provider: "test", id: "model", name: "Model", reasoning: true },
+      { provider: "test", id: "other", name: "Other", reasoning: true },
+    ];
     const pi = {
       on(name: string, handler: (...args: unknown[]) => unknown) {
         handlers.set(name, handler);
       },
-      getSessionName: () => "Live terminal",
-      sendUserMessage: (message: string) => remotePrompts.push(message),
+      getSessionName: () => renamed.at(-1) ?? "Live terminal",
+      getThinkingLevel: () => thinking,
+      setThinkingLevel: (level: string) => {
+        thinking = level;
+      },
+      setSessionName: (name: string) => renamed.push(name),
+      setModel: async (model: { id: string }) => {
+        selectedModels.push(model.id);
+        return true;
+      },
+      sendUserMessage: (message: unknown, options?: unknown) =>
+        remotePrompts.push({ message, options }),
     };
     const context = {
       mode: "tui",
@@ -46,7 +65,19 @@ describe("remote extension", () => {
       model: { provider: "test", id: "model", name: "Model" },
       thinkingLevel: "medium",
       isIdle: () => true,
+      abort: () => {
+        aborted = true;
+      },
+      compact: () => {
+        compacted = true;
+      },
       shutdown: () => assert.fail("session should not be rejected"),
+      modelRegistry: {
+        find: (provider: string, id: string) =>
+          models.find((model) => model.provider === provider && model.id === id),
+        getAvailable: () => models,
+        getAll: () => models,
+      },
       sessionManager: {
         getSessionId: () => "session-id",
         getSessionFile: () => sessionFile,
@@ -75,7 +106,27 @@ describe("remote extension", () => {
         await broker.command(registered.runtimeId, "prompt", { message: "from browser" }),
         { accepted: true },
       );
-      assert.deepEqual(remotePrompts, ["from browser"]);
+      assert.deepEqual(remotePrompts, [{ message: "from browser", options: undefined }]);
+
+      await broker.command(registered.runtimeId, "steer", { message: "redirect" });
+      await broker.command(registered.runtimeId, "follow_up", { message: "then this" });
+      await broker.command(registered.runtimeId, "abort");
+      await broker.command(registered.runtimeId, "compact");
+      await broker.command(registered.runtimeId, "set_model", {
+        provider: "test",
+        id: "other",
+      });
+      await broker.command(registered.runtimeId, "set_thinking", { level: "high" });
+      await broker.command(registered.runtimeId, "rename", { name: "Renamed" });
+      assert.deepEqual(remotePrompts.slice(1), [
+        { message: "redirect", options: { deliverAs: "steer" } },
+        { message: "then this", options: { deliverAs: "followUp" } },
+      ]);
+      assert.equal(aborted, true);
+      assert.equal(compacted, true);
+      assert.deepEqual(selectedModels, ["other"]);
+      assert.equal(thinking, "high");
+      assert.deepEqual(renamed, ["Renamed"]);
 
       await handlers.get("message_start")?.({ message: { role: "user", content: "hello" } }, context);
       const event = await waitFor(() => broker.listSessions()[0]?.lastEvent ?? null);
@@ -95,6 +146,63 @@ describe("remote extension", () => {
       await rm(dir, { recursive: true, force: true });
       if (previousSocket === undefined) delete process.env.PI_REMOTE_WEB_SOCKET;
       else process.env.PI_REMOTE_WEB_SOCKET = previousSocket;
+      if (previousLocks === undefined) delete process.env.PI_REMOTE_WEB_LOCK_DIR;
+      else process.env.PI_REMOTE_WEB_LOCK_DIR = previousLocks;
+    }
+  });
+
+  it("rejects a terminal session when another live runtime owns its file", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-conflict-"));
+    const lockDir = path.join(dir, "locks");
+    const sessionFile = path.join(dir, "session.jsonl");
+    const previousLocks = process.env.PI_REMOTE_WEB_LOCK_DIR;
+    process.env.PI_REMOTE_WEB_LOCK_DIR = lockDir;
+    const foreign = await acquireSessionLock({
+      baseDir: lockDir,
+      sessionPath: sessionFile,
+      ownerKind: "terminal",
+      runtimeId: "foreign-runtime",
+      pid: process.pid,
+    });
+    assert.equal(foreign.ok, true);
+
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    let shutdown = false;
+    const notices: string[] = [];
+    const pi = {
+      on(name: string, handler: (...args: unknown[]) => unknown) {
+        handlers.set(name, handler);
+      },
+      getSessionName: () => "Conflict",
+      getThinkingLevel: () => "off",
+    };
+    const context = {
+      mode: "tui",
+      cwd: dir,
+      isIdle: () => true,
+      shutdown: () => {
+        shutdown = true;
+      },
+      sessionManager: {
+        getSessionId: () => "conflict-session",
+        getSessionFile: () => sessionFile,
+        getLeafId: () => null,
+        getBranch: () => [],
+      },
+      ui: {
+        setStatus: () => {},
+        notify: (message: string) => notices.push(message),
+      },
+    };
+
+    try {
+      remoteExtension(pi as unknown as ExtensionAPI);
+      await handlers.get("session_start")?.({}, context);
+      assert.equal(shutdown, true);
+      assert.match(notices[0] ?? "", /foreign-runtime/);
+    } finally {
+      if (foreign.ok) await releaseSessionLock(foreign.lock);
+      await rm(dir, { recursive: true, force: true });
       if (previousLocks === undefined) delete process.env.PI_REMOTE_WEB_LOCK_DIR;
       else process.env.PI_REMOTE_WEB_LOCK_DIR = previousLocks;
     }

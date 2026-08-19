@@ -31,6 +31,7 @@ export type ConnectedInfo = {
 
 export type StreamEffect =
   | { type: "need_snapshot"; info: ConnectedInfo }
+  | { type: "refresh_snapshot"; truncated?: boolean; droppedMessages?: number }
   | { type: "resumed"; info: ConnectedInfo }
   | { type: "messages" }
   | { type: "turn"; phase: TurnPhase }
@@ -40,6 +41,11 @@ export type StreamEffect =
   | { type: "queues"; steer: string[]; followUp: string[] }
   | { type: "thinking"; level: string }
   | { type: "session_name"; name: string }
+  | {
+      type: "session_meta";
+      session: Record<string, unknown>;
+      previousSession?: Record<string, unknown>;
+    }
   | { type: "compacting"; active: boolean; errorMessage?: string }
   | { type: "tree_navigated"; editorText?: string }
   | { type: "retry"; message: string }
@@ -578,6 +584,42 @@ export class ChatStream {
   private applyEvent(e: Record<string, unknown>): StreamEffect[] {
     const type = e.type;
     switch (type) {
+      case "snapshot_available":
+        return [
+          {
+            type: "refresh_snapshot",
+            truncated: Boolean(e.truncated),
+            droppedMessages:
+              typeof e.droppedMessages === "number" ? e.droppedMessages : undefined,
+          },
+          ...(e.session && typeof e.session === "object"
+            ? [{ type: "session_meta" as const, session: e.session as Record<string, unknown> }]
+            : []),
+        ];
+      case "resync_required":
+        return [{ type: "refresh_snapshot" }];
+      case "remote_connection":
+        return [
+          {
+            type: "session_meta",
+            session: { connected: Boolean(e.connected), running: Boolean(e.connected) },
+          },
+        ];
+      case "session_replaced": {
+        this.messages = [];
+        this.clearTurn();
+        return [
+          { type: "messages" },
+          {
+            type: "session_meta",
+            session: (e.session as Record<string, unknown>) ?? {},
+            previousSession:
+              e.previousSession && typeof e.previousSession === "object"
+                ? (e.previousSession as Record<string, unknown>)
+                : undefined,
+          },
+        ];
+      }
       case "message_start": {
         const msg = e.message as ChatMessage | undefined;
         if (!msg) return [];
@@ -664,6 +706,7 @@ export class ChatStream {
           },
         ];
       case "thinking_level_changed":
+      case "thinking_level_select":
         if (e.level != null) {
           return [{ type: "thinking", level: String(e.level) }];
         }

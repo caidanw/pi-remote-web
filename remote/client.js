@@ -1,5 +1,6 @@
 import net from "node:net";
 import {
+  DEFAULT_MAX_FRAME_BYTES,
   REMOTE_PROTOCOL_VERSION,
   createFrameParser,
   encodeFrame,
@@ -23,6 +24,7 @@ export class RemoteClient {
    *   onState?: (state: "connecting" | "connected" | "disconnected") => void;
    *   maxBackoffMs?: number;
    *   maxQueueBytes?: number;
+   *   maxFrameBytes?: number;
    *   random?: () => number;
    * }} options
    */
@@ -36,6 +38,7 @@ export class RemoteClient {
     this.queue = [];
     this.queueBytes = 0;
     this.resyncQueued = false;
+    this.lastSnapshot = "";
   }
 
   start() {
@@ -52,6 +55,7 @@ export class RemoteClient {
     this.queue = [];
     this.queueBytes = 0;
     this.resyncQueued = false;
+    this.lastSnapshot = "";
     this.socket?.destroy();
     this.socket = null;
   }
@@ -65,6 +69,54 @@ export class RemoteClient {
       runtimeId: this.options.runtimeId,
       event,
     });
+  }
+
+  /** Send one deduplicated authoritative transcript/metadata replacement. */
+  snapshot() {
+    if (!this.socket || this.socket.destroyed) return;
+    const max = this.options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+    const frame = {
+      protocol: REMOTE_PROTOCOL_VERSION,
+      type: "snapshot",
+      runtimeId: this.options.runtimeId,
+      ...this.options.getSnapshot(),
+    };
+    let encoded = encodeFrame(frame);
+    const oversize = Buffer.byteLength(encoded) > max;
+    if (oversize) {
+      const messages = Array.isArray(frame.messages) ? frame.messages : [];
+      let low = 0;
+      let high = messages.length;
+      while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        const candidate = encodeFrame({
+          ...frame,
+          messages: messages.slice(mid),
+          truncated: true,
+          droppedMessages: mid,
+        });
+        if (Buffer.byteLength(candidate) <= max) high = mid;
+        else low = mid + 1;
+      }
+      encoded = encodeFrame({
+        ...frame,
+        messages: messages.slice(low),
+        truncated: true,
+        droppedMessages: low,
+      });
+      if (Buffer.byteLength(encoded) > max) return;
+    }
+    if (encoded === this.lastSnapshot) return;
+    this.lastSnapshot = encoded;
+    if (oversize) {
+      this.#send({
+        protocol: REMOTE_PROTOCOL_VERSION,
+        type: "resync_required",
+        runtimeId: this.options.runtimeId,
+        reason: "snapshot_too_large",
+      });
+    }
+    this.#sendEncoded(encoded);
   }
 
   #connect() {
@@ -82,6 +134,7 @@ export class RemoteClient {
     socket.on("connect", () => {
       this.retryMs = 250;
       this.blocked = false;
+      this.lastSnapshot = "";
       this.options.onState?.("connected");
       this.#send({
         protocol: REMOTE_PROTOCOL_VERSION,
@@ -89,12 +142,7 @@ export class RemoteClient {
         runtimeId: this.options.runtimeId,
         ...this.options.getRegistration(),
       });
-      this.#send({
-        protocol: REMOTE_PROTOCOL_VERSION,
-        type: "snapshot",
-        runtimeId: this.options.runtimeId,
-        ...this.options.getSnapshot(),
-      });
+      this.snapshot();
     });
     socket.on("drain", () => {
       this.blocked = false;
@@ -130,7 +178,11 @@ export class RemoteClient {
 
   /** @param {unknown} frame */
   #send(frame) {
-    const encoded = encodeFrame(frame);
+    this.#sendEncoded(encodeFrame(frame));
+  }
+
+  /** @param {string} encoded */
+  #sendEncoded(encoded) {
     if (this.blocked) {
       this.#enqueue(encoded);
       return;
@@ -165,8 +217,13 @@ export class RemoteClient {
       const encoded = this.queue.shift();
       if (!encoded) continue;
       this.queueBytes -= Buffer.byteLength(encoded);
-      if (this.resyncQueued) this.resyncQueued = false;
+      const resync = this.resyncQueued;
+      if (resync) this.resyncQueued = false;
       this.blocked = !this.socket.write(encoded);
+      if (resync) {
+        this.lastSnapshot = "";
+        this.snapshot();
+      }
     }
   }
 

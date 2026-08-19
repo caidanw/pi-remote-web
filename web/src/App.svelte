@@ -76,6 +76,7 @@
   /** Non-fatal open note (e.g. model restore fallback) — dismissible */
   let warn = $state<string | null>(null);
   let shareNotice = $state<{ viewer: string; gist: string } | null>(null);
+  let terminalSwitch = $state<Partial<SessionRow> | null>(null);
   let cmdkOpen = $state(false);
   let skillWorkspaceOpen = $state(false);
   let forkRequest = $state<{
@@ -175,17 +176,7 @@
         );
         if (row) {
           const nextId = row.running ? row.id : selected.id;
-          selected = {
-            ...selected,
-            id: nextId,
-            running: row.running,
-            messageCount: row.messageCount,
-            firstMessage: row.firstMessage,
-            name: row.name ?? selected.name,
-            sessionName: row.sessionName ?? selected.sessionName,
-            modified: row.modified,
-            path: row.path ?? selected.path,
-          };
+          selected = { ...selected, ...row, id: nextId };
           if (pathSessionId() && pathSessionId() !== nextId) {
             setSessionUrl(nextId, "replace");
           }
@@ -290,6 +281,24 @@
     upsertSession(row);
     setSessionUrl(row.id);
     return row;
+  }
+
+  function onTerminalSwitch(previous: Partial<SessionRow>) {
+    if (previous.path) terminalSwitch = previous;
+    void refresh();
+  }
+
+  function openPreviousTerminalSession() {
+    const previous = terminalSwitch;
+    terminalSwitch = null;
+    if (!previous?.path) return;
+    void onSelect({
+      id: previous.id || previous.path,
+      path: previous.path,
+      cwd: previous.cwd,
+      name: previous.name,
+      running: false,
+    });
   }
 
   function onSessionUpdate(id: string, patch: Partial<SessionRow>) {
@@ -696,6 +705,13 @@
         </button>
       </div>
     {/if}
+    {#if terminalSwitch}
+      <div class="flex items-center gap-2 border-b border-sky-500/30 bg-sky-500/10 px-4 py-2 text-sm">
+        <span>Terminal switched sessions</span>
+        <button type="button" class="underline" onclick={openPreviousTerminalSession}>Open previous session</button>
+        <button type="button" class="ml-auto text-xs underline opacity-80" onclick={() => (terminalSwitch = null)}>Dismiss</button>
+      </div>
+    {/if}
     {#if shareNotice}
       <div class="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-100">
         <div class="flex items-start justify-between gap-3">
@@ -721,14 +737,15 @@
       onEnsureSession={ensureSession}
       onBuiltinSlash={onBuiltinSlash}
       onRequestFork={requestFork}
+      {onTerminalSwitch}
       {treeNavigation}
       showExpandSidebar={!sidebarOpen}
-      showExpandGit={!gitSidebarOpen}
+      showExpandGit={!gitSidebarOpen && !selected?.remote}
       onExpandSidebar={() => setSidebarOpen(true)}
       onExpandGit={() => setGitSidebarOpen(true)}
     />
   </div>
-  {#if gitSidebarOpen}
+  {#if gitSidebarOpen && !selected?.remote}
     <GitDiffSidebar
       sessionId={selected?.running ? selected.id : undefined}
       cwd={selected?.cwd}
@@ -768,7 +785,7 @@
 />
 
 <SkillWorkspaceDialog
-  open={skillWorkspaceOpen}
+  open={skillWorkspaceOpen && !selected?.remote}
   sessionId={selected?.id}
   cwd={selected?.cwd}
   onClose={() => (skillWorkspaceOpen = false)}

@@ -6,7 +6,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "./http.js";
+import { createServer, mergeRemoteSessions } from "./http.js";
 import { hub } from "./hub.js";
 import { acquireSessionLock, releaseSessionLock } from "../remote/session-lock.js";
 import { makeTestCwd, cleanupTestCwd } from "./test-temp.js";
@@ -92,6 +92,7 @@ describe("HTTP wire contract", () => {
   let sessionId;
   /** @type {string | undefined} */
   let previousLockDir;
+  const remoteCommands = [];
 
   before(async () => {
     cwd = makeTestCwd("pi-remote-web-http-");
@@ -101,13 +102,56 @@ describe("HTTP wire contract", () => {
       port: 0,
       remoteBroker: {
         listSessions: () => [
-          { runtimeId: "terminal-one", connected: true },
+          {
+            runtimeId: "terminal-one",
+            connected: true,
+            registration: {
+              session: {
+                id: "terminal-session-one",
+                path: "/tmp/terminal-one.jsonl",
+                cwd: "/tmp/project-one",
+                name: "Terminal one",
+                thinkingLevel: "medium",
+                model: { provider: "test", id: "one", name: "One" },
+              },
+            },
+          },
           { runtimeId: "terminal-two", connected: false },
         ],
+        hasSession: (runtimeId) => runtimeId === "terminal-one" || runtimeId === "terminal-two",
+        findByPath: (sessionPath) => sessionPath === "/tmp/terminal-one.jsonl" ? "terminal-one" : null,
+        getSessionRow: (runtimeId) => ({
+          id: runtimeId,
+          runtimeId,
+          remote: true,
+          bound: true,
+          running: true,
+          connected: runtimeId === "terminal-one",
+          path: runtimeId === "terminal-one" ? "/tmp/terminal-one.jsonl" : undefined,
+          cwd: runtimeId === "terminal-one" ? "/tmp/project-one" : undefined,
+          name: runtimeId === "terminal-one" ? "Terminal one" : undefined,
+          thinkingLevel: "medium",
+          model: { provider: "test", id: "one", name: "One", reasoning: true },
+        }),
         getMessages: (runtimeId) => [
           { role: "user", content: `messages for ${runtimeId}` },
         ],
-        command: async (_runtimeId, command) => ({ accepted: command }),
+        ringInfo: () => ({ seq: 2, ringStart: 1 }),
+        eventsAfter: (_runtimeId, after) =>
+          after < 2
+            ? [{ seq: 2, event: { type: "message_start", message: { role: "assistant", content: "live" } } }]
+            : [],
+        subscribeSession: () => () => {},
+        command: async (runtimeId, command, payload) => {
+          remoteCommands.push({ runtimeId, command, payload });
+          if (command === "list_models") {
+            return { models: [{ provider: "test", id: "one", name: "One" }] };
+          }
+          if (command === "get_thinking") {
+            return { level: "medium", available: ["off", "medium"], supports: true };
+          }
+          return { accepted: command };
+        },
       },
     });
     await new Promise((resolve) => app.listen(resolve));
@@ -140,6 +184,26 @@ describe("HTTP wire contract", () => {
     cleanupTestCwd(cwd);
     if (previousLockDir === undefined) delete process.env.PI_REMOTE_WEB_LOCK_DIR;
     else process.env.PI_REMOTE_WEB_LOCK_DIR = previousLockDir;
+  });
+
+  it("keeps saved history rows pinned beside a runtime-following terminal row", () => {
+    const broker = {
+      listSessions: () => [
+        {
+          runtimeId: "runtime",
+          connected: true,
+          registration: { session: { id: "current", path: "/tmp/current.jsonl" } },
+        },
+      ],
+    };
+    const rows = mergeRemoteSessions(
+      [
+        { id: "previous", path: "/tmp/previous.jsonl", running: false },
+        { id: "current", path: "/tmp/current.jsonl", running: false },
+      ],
+      broker,
+    );
+    assert.deepEqual(rows.map((row) => row.id), ["runtime", "previous"]);
   });
 
   it("GET /api/health", async () => {
@@ -183,6 +247,74 @@ describe("HTTP wire contract", () => {
     assert.equal(body.config.version, 1);
     assert.ok(Array.isArray(body.warnings));
     assert.equal(typeof body.trustedProject, "boolean");
+  });
+
+  it("routes the existing session contract to terminal owners", async () => {
+    const listed = await api(base, "/api/sessions");
+    const live = listed.body.sessions.find((row) => row.id === "terminal-one");
+    assert.equal(live.remote, true);
+    assert.equal(live.bound, true);
+    assert.equal(live.name, "Terminal one");
+
+    const detail = await api(base, "/api/sessions/terminal-one");
+    assert.equal(detail.body.path, "/tmp/terminal-one.jsonl");
+    const messages = await api(base, "/api/sessions/terminal-one/messages");
+    assert.equal(messages.body.messages[0].content, "messages for terminal-one");
+    const attached = await api(base, "/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "/tmp/terminal-one.jsonl" }),
+    });
+    assert.equal(attached.body.id, "terminal-one");
+
+    const frames = await readSseUntil(
+      `${base}/api/sessions/terminal-one/events?after=1`,
+      (items) => items.some((frame) => frame.id === 2),
+    );
+    assert.equal(frames.find((frame) => frame.id === 2)?.data.type, "message_start");
+
+    const calls = [
+      ["prompt", { message: "hello" }],
+      ["steer", { message: "redirect" }],
+      ["follow-up", { message: "later" }],
+      ["abort", undefined],
+      ["model", { provider: "test", id: "one" }],
+      ["thinking", { level: "high" }],
+      ["compact", {}],
+    ];
+    for (const [route, body] of calls) {
+      const result = await api(base, `/api/sessions/terminal-one/${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      assert.ok(result.res.status < 300, `${route}: ${result.text}`);
+    }
+    const renamed = await api(base, "/api/sessions/terminal-one", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Renamed" }),
+    });
+    assert.equal(renamed.res.status, 200);
+    const routed = remoteCommands.map((call) => call.command);
+    for (const command of [
+      "prompt",
+      "steer",
+      "follow_up",
+      "abort",
+      "set_model",
+      "set_thinking",
+      "compact",
+      "rename",
+    ]) assert.ok(routed.includes(command), `missing ${command}`);
+
+    const unsupported = await api(base, "/api/sessions/terminal-one/bash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "pwd" }),
+    });
+    assert.equal(unsupported.res.status, 409);
+    assert.equal(unsupported.body.code, "REMOTE_UNSUPPORTED");
   });
 
   it("GET /api/sessions lists running hub id", async () => {

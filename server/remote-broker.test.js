@@ -29,7 +29,11 @@ function makeClient(socketPath, runtimeId, onCommand) {
     random: () => 0.5,
     onCommand,
     getRegistration: () => ({
-      session: { id: `session-${runtimeId}`, cwd: `/tmp/${runtimeId}` },
+      session: {
+        id: `session-${runtimeId}`,
+        path: `/tmp/${runtimeId}.jsonl`,
+        cwd: `/tmp/${runtimeId}`,
+      },
     }),
     getSnapshot: () => ({ messages: [{ role: "user", content: runtimeId }] }),
   });
@@ -84,11 +88,162 @@ describe("remote broker", () => {
     );
   });
 
-  it("marks a terminal disconnected without deleting its snapshot", async () => {
+  it("keeps a runtime-following stream across terminal /new while old paths unpin", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
+    const socketPath = path.join(dir, "broker.sock");
+    let active = { id: "old-session", path: "/tmp/old.jsonl", messages: [{ role: "user", content: "old" }] };
+    const client = new RemoteClient({
+      socketPath,
+      runtimeId: "terminal",
+      maxBackoffMs: 20,
+      random: () => 0.5,
+      getRegistration: () => ({ session: { id: active.id, path: active.path, cwd: "/tmp" } }),
+      getSnapshot: () => ({
+        session: { id: active.id, path: active.path, cwd: "/tmp" },
+        messages: active.messages,
+      }),
+    });
+    const broker = new RemoteBroker({ socketPath });
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => broker.close());
+    cleanup.push(async () => client.stop());
+
+    await broker.listen();
+    client.start();
+    await waitFor(() => broker.hasSession("terminal") && broker.getMessages("terminal")[0]);
+    const events = [];
+    broker.subscribeSession("terminal", (event) => events.push(event));
+
+    client.stop();
+    active = { id: "new-session", path: "/tmp/new.jsonl", messages: [{ role: "user", content: "new" }] };
+    client.start();
+
+    await waitFor(() =>
+      broker.hasSession("terminal") && broker.getMessages("terminal")[0]?.content === "new",
+    );
+    assert.equal(broker.getSessionRow("terminal").path, "/tmp/new.jsonl");
+    assert.equal(broker.findByPath("/tmp/old.jsonl"), null);
+    assert.equal(broker.findByPath("/tmp/new.jsonl"), "terminal");
+    assert.deepEqual(
+      events.filter((event) => event.type === "session_replaced")[0],
+      {
+        type: "session_replaced",
+        previousSession: { id: "old-session", path: "/tmp/old.jsonl", cwd: "/tmp" },
+        session: { id: "new-session", path: "/tmp/new.jsonl", cwd: "/tmp" },
+      },
+    );
+    assert.ok(events.some((event) => event.type === "snapshot_available"));
+    assert.ok(events.every((event) => event.type !== "snapshot"));
+  });
+
+  it("bounds oversize snapshots, requests resync, and deduplicates replay", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
+    const socketPath = path.join(dir, "broker.sock");
+    const client = new RemoteClient({
+      socketPath,
+      runtimeId: "terminal",
+      maxFrameBytes: 512,
+      getRegistration: () => ({ session: { id: "large", cwd: "/tmp" } }),
+      getSnapshot: () => ({
+        session: { id: "large", cwd: "/tmp" },
+        messages: [{ role: "user", content: "x".repeat(2048) }],
+      }),
+    });
+    const broker = new RemoteBroker({ socketPath });
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => broker.close());
+    cleanup.push(async () => client.stop());
+
+    await broker.listen();
+    client.start();
+    const snapshot = await waitFor(() => broker.hasSession("terminal") && broker.getSession("terminal").snapshot);
+    assert.equal(snapshot.truncated, true);
+    assert.equal(snapshot.droppedMessages, 1);
+    assert.deepEqual(broker.getMessages("terminal"), []);
+    const ring = broker.eventsAfter("terminal", 0);
+    assert.ok(ring.some(({ event }) => event.type === "resync_required"));
+    assert.ok(ring.some(({ event }) => event.type === "snapshot_available"));
+    assert.ok(ring.every(({ event }) => !Array.isArray(event.messages)));
+
+    const before = broker.ringInfo("terminal").seq;
+    client.snapshot();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(broker.ringInfo("terminal").seq, before);
+  });
+
+  it("repairs a backpressure overflow with a fresh authoritative snapshot", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
+    const socketPath = path.join(dir, "broker.sock");
+    let transcript = [{ role: "user", content: "initial" }];
+    const client = new RemoteClient({
+      socketPath,
+      runtimeId: "terminal",
+      maxQueueBytes: 128,
+      getRegistration: () => ({ session: { id: "backpressure", cwd: "/tmp" } }),
+      getSnapshot: () => ({
+        session: { id: "backpressure", cwd: "/tmp" },
+        messages: transcript,
+      }),
+    });
+    const broker = new RemoteBroker({ socketPath });
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => broker.close());
+    cleanup.push(async () => client.stop());
+
+    await broker.listen();
+    client.start();
+    await waitFor(() =>
+      broker.hasSession("terminal") && broker.getMessages("terminal")[0]?.content === "initial",
+    );
+    transcript = [{ role: "user", content: "repaired" }];
+
+    const socket = client.socket;
+    assert.ok(socket);
+    const write = socket.write;
+    socket.write = () => false;
+    client.publish({ type: "message_update", message: { role: "assistant", content: "blocked" } });
+    client.publish({ type: "message_update", data: "x".repeat(1024) });
+    socket.write = write;
+    socket.emit("drain");
+
+    await waitFor(() => broker.getMessages("terminal")[0]?.content === "repaired");
+    assert.ok(
+      broker.eventsAfter("terminal", 0).some(({ event }) => event.type === "resync_required"),
+    );
+  });
+
+  it("serializes commands per terminal runtime", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
+    const socketPath = path.join(dir, "broker.sock");
+    let active = 0;
+    let maxActive = 0;
+    const client = makeClient(socketPath, "terminal", async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      active -= 1;
+      return { accepted: true };
+    });
+    const broker = new RemoteBroker({ socketPath });
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => broker.close());
+    cleanup.push(async () => client.stop());
+
+    await broker.listen();
+    client.start();
+    await waitFor(() => broker.listSessions()[0]?.connected);
+    await Promise.all([
+      broker.command("terminal", "prompt", { message: "one" }),
+      broker.command("terminal", "prompt", { message: "two" }),
+    ]);
+    assert.equal(maxActive, 1);
+  });
+
+  it("keeps a disconnected terminal through grace, then removes its catalogue claim", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
     const socketPath = path.join(dir, "broker.sock");
     const client = makeClient(socketPath, "terminal");
-    const broker = new RemoteBroker({ socketPath });
+    const broker = new RemoteBroker({ socketPath, reconnectGraceMs: 40 });
     cleanup.push(() => rm(dir, { recursive: true, force: true }));
     cleanup.push(() => broker.close());
     cleanup.push(async () => client.stop());
@@ -104,5 +259,8 @@ describe("remote broker", () => {
     });
     assert.equal(row.runtimeId, "terminal");
     assert.ok(row.snapshot);
+    assert.equal(broker.getSessionRow("terminal").running, false);
+    await waitFor(() => !broker.hasSession("terminal"));
+    assert.equal(broker.findByPath("/tmp/terminal.jsonl"), null);
   });
 });

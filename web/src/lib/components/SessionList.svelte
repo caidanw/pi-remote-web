@@ -469,7 +469,13 @@
                         onclick={() => selectSession(s)}
                       >
                         <div class="flex min-w-0 items-center gap-1.5">
-                          {#if s.streaming}
+                          {#if s.remote && !s.connected}
+                            <span
+                              class="size-1.5 shrink-0 rounded-full bg-muted-foreground/50"
+                              title="Terminal disconnected"
+                              aria-label="Terminal disconnected"
+                            ></span>
+                          {:else if s.streaming}
                             <span
                               class="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500"
                               title="Streaming"
@@ -485,9 +491,9 @@
                           <span class="min-w-0 flex-1 truncate text-xs font-medium">{label(s)}</span>
                           {#if s.bound}
                             <span
-                              class="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400"
-                              title="Attached from pi TUI"
-                            >tui</span>
+                              class="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase tracking-wide {s.remote && !s.connected ? 'text-muted-foreground' : 'text-sky-600 dark:text-sky-400'}"
+                              title={s.remote && !s.connected ? "Terminal reconnecting" : "Attached from pi TUI"}
+                            >{s.remote && !s.connected ? "offline" : "tui"}</span>
                           {/if}
                         </div>
                       </button>

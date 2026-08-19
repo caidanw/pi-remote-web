@@ -481,14 +481,46 @@ describe("ChatStream event effects", () => {
     assert.equal(s.isSnapshotting, true);
   });
 
-  it("thinking_level_changed and session_info_changed", () => {
+  it("applies authoritative remote snapshots and follows runtime replacements", () => {
+    const s = new ChatStream();
+    s.bindSession("terminal-runtime");
+    s.commitSnapshot([{ role: "user", content: "old" }], 0);
+
+    const replaced = s.handleFrame(1, {
+      type: "session_replaced",
+      previousSession: { id: "old", path: "/tmp/old.jsonl" },
+      session: { id: "new", path: "/tmp/new.jsonl" },
+    });
+    assert.deepEqual(s.messages, []);
+    assert.equal(replaced[1]?.type, "session_meta");
+
+    const available = s.handleFrame(2, {
+      type: "snapshot_available",
+      session: { id: "new", path: "/tmp/new.jsonl" },
+      truncated: false,
+    });
+    assert.deepEqual(s.messages, []);
+    assert.deepEqual(available.map((effect) => effect.type), [
+      "refresh_snapshot",
+      "session_meta",
+    ]);
+    assert.deepEqual(
+      s.handleFrame(3, { type: "remote_connection", connected: false }),
+      [{ type: "session_meta", session: { connected: false, running: false } }],
+    );
+  });
+
+  it("thinking level aliases and session_info_changed", () => {
     const s = new ChatStream();
     s.bindSession("s-meta");
     s.commitSnapshot([], 0);
     assert.deepEqual(s.handleFrame(1, { type: "thinking_level_changed", level: "high" }), [
       { type: "thinking", level: "high" },
     ]);
-    assert.deepEqual(s.handleFrame(2, { type: "session_info_changed", name: "n" }), [
+    assert.deepEqual(s.handleFrame(2, { type: "thinking_level_select", level: "max" }), [
+      { type: "thinking", level: "max" },
+    ]);
+    assert.deepEqual(s.handleFrame(3, { type: "session_info_changed", name: "n" }), [
       { type: "session_name", name: "n" },
     ]);
   });

@@ -13,6 +13,10 @@ export type SessionRow = {
   running: boolean;
   /** Live TUI (or external) attach — hub does not own/dispose the AgentSession */
   bound?: boolean;
+  /** Persistent daemon adapter session (id is the terminal runtime id). */
+  remote?: boolean;
+  runtimeId?: string;
+  connected?: boolean;
   streaming?: boolean;
   thinkingLevel?: string;
   thinking?: string;
