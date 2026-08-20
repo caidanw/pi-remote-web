@@ -31,8 +31,10 @@
   import TreeNavigateDialog from "$lib/components/TreeNavigateDialog.svelte";
   import SkillWorkspaceDialog from "$lib/components/SkillWorkspaceDialog.svelte";
   import WorktreeDialog from "$lib/components/WorktreeDialog.svelte";
+  import PairingScanner from "$lib/components/PairingScanner.svelte";
   import { loadAndApplyCustomization } from "$lib/customization";
   import { runAuthenticatedStartup } from "$lib/auth-bootstrap";
+  import { pairingTokenFromQr } from "$lib/pairing-token";
   const SIDEBAR_KEY = "pi-remote-web-sidebar-open";
   const GIT_SIDEBAR_KEY = "pi-remote-web-git-sidebar-open";
 
@@ -44,6 +46,9 @@
   let authReady = $state(false);
   let authRequired = $state(false);
   let pairingError = $state("");
+  let pairingScannerOpen = $state(false);
+  let pairingValue = $state("");
+  let pairingBusy = $state(false);
   let sidebarOpen = $state(
     (() => {
       try {
@@ -697,6 +702,49 @@
     return () => window.removeEventListener("keydown", handler);
   });
 
+  async function loadAuthenticatedUi() {
+    await refresh();
+    if (!routedOnce) {
+      routedOnce = true;
+      await routeFromUrl();
+    }
+    try {
+      const health = await getHealth();
+      if (health.cwd) defaultCwd = health.cwd;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function pairWithToken(token: string) {
+    pairingBusy = true;
+    pairingError = "";
+    try {
+      await exchangePairingToken(token);
+      authRequired = false;
+      pairingScannerOpen = false;
+      await loadAuthenticatedUi();
+    } catch (cause) {
+      pairingError = cause instanceof Error ? cause.message : String(cause);
+      throw cause;
+    } finally {
+      pairingBusy = false;
+    }
+  }
+
+  async function pairFromPastedLink() {
+    const token = pairingTokenFromQr(pairingValue, location.origin);
+    if (!token) {
+      pairingError = "Paste the HTTPS pairing link generated for this app.";
+      return;
+    }
+    try {
+      await pairWithToken(token);
+    } catch {
+      /* Pairing error is shown in the card. */
+    }
+  }
+
   $effect(() => {
     const onPop = () => {
       void routeFromUrl();
@@ -720,19 +768,7 @@
             if (token) history.replaceState(null, "", location.pathname + location.search);
             return status.authenticated;
           },
-          async () => {
-            await refresh();
-            if (!routedOnce) {
-              routedOnce = true;
-              await routeFromUrl();
-            }
-            try {
-              const h = await getHealth();
-              if (h.cwd) defaultCwd = h.cwd;
-            } catch {
-              /* ignore */
-            }
-          },
+          loadAuthenticatedUi,
         );
         authRequired = !authenticated;
         if (!authenticated) listReady = true;
@@ -980,9 +1016,44 @@
             : "Please wait…"}
         </p>
       </div>
+      {#if authReady}
+        <button
+          type="button"
+          class="w-full rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground"
+          onclick={() => {
+            pairingError = "";
+            pairingScannerOpen = true;
+          }}
+        >
+          Scan QR code
+        </button>
+        <form class="flex gap-2" onsubmit={(event) => { event.preventDefault(); void pairFromPastedLink(); }}>
+          <input
+            type="url"
+            class="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-base"
+            placeholder="Paste pairing link"
+            aria-label="Pairing link"
+            bind:value={pairingValue}
+          />
+          <button
+            type="submit"
+            class="rounded-lg border border-border px-3 py-2 text-sm font-medium disabled:opacity-50"
+            disabled={pairingBusy || !pairingValue.trim()}
+          >
+            {pairingBusy ? "Pairing…" : "Pair"}
+          </button>
+        </form>
+      {/if}
       {#if pairingError}
         <p class="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">{pairingError}</p>
       {/if}
     </main>
   </div>
+{/if}
+
+{#if pairingScannerOpen}
+  <PairingScanner
+    onPair={pairWithToken}
+    onClose={() => (pairingScannerOpen = false)}
+  />
 {/if}
