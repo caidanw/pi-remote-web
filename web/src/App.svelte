@@ -793,6 +793,7 @@
   });
 </script>
 
+{#if authReady && !authRequired}
 <div class="flex h-svh w-full overflow-hidden bg-background text-foreground">
   {#if sidebarOpen}
     <!-- Phones: overlay the chat and dim it; tablets and up keep the split layout. -->
@@ -1002,6 +1003,7 @@
     onCancel={cancelTreeNavigation}
     onNavigate={confirmTreeNavigation}
   />
+{/if}
 {/if}
 
 {#if !authReady || authRequired}

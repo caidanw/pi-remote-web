@@ -1,10 +1,17 @@
 /** Thin fetch client for pi-remote-web server. */
 
 let csrfToken = "";
+let authGeneration = 0;
+
+function setAuthenticated(csrf: string) {
+  csrfToken = csrf;
+  authGeneration += 1;
+}
 
 export async function getAuthStatus() {
   const status = await req<{ authenticated: boolean; csrf?: string; expiresAt?: number }>("/api/auth/status");
-  csrfToken = status.csrf || "";
+  if (status.authenticated) setAuthenticated(status.csrf || "");
+  else csrfToken = "";
   return status;
 }
 
@@ -13,13 +20,14 @@ export async function exchangePairingToken(token: string) {
     "/api/auth/exchange",
     { method: "POST", body: JSON.stringify({ token }) },
   );
-  csrfToken = status.csrf;
+  setAuthenticated(status.csrf);
   return status;
 }
 
 export async function logoutBrowser() {
   await req<{ ok: true }>("/api/auth/logout", { method: "POST" });
   csrfToken = "";
+  authGeneration += 1;
 }
 
 export type SessionRow = {
@@ -214,6 +222,7 @@ export function listFs(path?: string) {
 
 /** One retry on hard network failure (server restart / empty reply). */
 async function req<T>(path: string, init?: RequestInit, attempt = 0): Promise<T> {
+  const requestAuthGeneration = authGeneration;
   let res: Response;
   try {
     const method = (init?.method || "GET").toUpperCase();
@@ -247,7 +256,11 @@ async function req<T>(path: string, init?: RequestInit, attempt = 0): Promise<T>
       code?: string;
     };
     const msg = body.error || res.statusText;
-    if (res.status === 401 && typeof window !== "undefined") {
+    if (
+      res.status === 401 &&
+      requestAuthGeneration === authGeneration &&
+      typeof window !== "undefined"
+    ) {
       csrfToken = "";
       window.dispatchEvent(new CustomEvent("pi-remote-web:auth-required"));
     }
