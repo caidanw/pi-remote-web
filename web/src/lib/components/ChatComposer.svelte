@@ -117,6 +117,27 @@
     </div>
   {/if}
 
+  {#if showFolderContext}
+    <div class="flex min-w-0 items-center px-3 pt-2">
+      {#if !sessionId}
+        <FolderPicker
+          value={folderValue}
+          defaultPath={defaultFolder}
+          {disabled}
+          onChange={onFolderChange}
+        />
+      {:else if sessionCwd}
+        <span
+          class="flex h-7 max-w-full items-center gap-1 rounded-full bg-muted/50 px-2 text-[11px] text-muted-foreground"
+          title={sessionCwd}
+        >
+          <Folder class="size-3 shrink-0 opacity-70" />
+          <span class="min-w-0 truncate">{shortFolder(sessionCwd)}</span>
+        </span>
+      {/if}
+    </div>
+  {/if}
+
   <PromptInputTextarea
     {placeholder}
     class={textareaClass}
@@ -124,39 +145,23 @@
     onpaste={onPaste}
   />
 
-  <PromptInputActions class="items-end justify-between gap-2 pt-1">
-    <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+  <PromptInputActions class="items-center justify-between gap-2 pt-1">
+    <div class="flex min-w-0 flex-1 items-center gap-1">
       <ComposerPlus {onFiles} {disabled} />
-      {#if showFolderContext}
-        {#if !sessionId}
-          <FolderPicker
-            value={folderValue}
-            defaultPath={defaultFolder}
-            {disabled}
-            onChange={onFolderChange}
-          />
-        {:else if sessionCwd}
-          <span
-            class="flex h-7 max-w-[14rem] items-center gap-1 truncate rounded-full bg-muted/50 px-2 text-[11px] text-muted-foreground"
-            title={sessionCwd}
-          >
-            <Folder class="size-3 shrink-0 opacity-70" />
-            {shortFolder(sessionCwd)}
-          </span>
-        {/if}
-      {/if}
       {#if showModel}
-        <ModelPicker
-          {sessionId}
-          {model}
-          disabled={disabled || modelDisabled}
-          onChange={onModelChange}
-          {onError}
-        />
+        <div class="min-w-0 flex-1">
+          <ModelPicker
+            {sessionId}
+            {model}
+            disabled={disabled || modelDisabled}
+            onChange={onModelChange}
+            {onError}
+          />
+        </div>
       {/if}
     </div>
 
-    <div class="flex shrink-0 items-center gap-1 self-end">
+    <div class="flex shrink-0 items-center gap-1">
       {#if cancelable}
         <Button
           type="button"
@@ -173,7 +178,7 @@
         <PromptInputAction tooltip="Stop">
           <Button
             size="icon"
-            class="size-8 shrink-0 rounded-full"
+            class="size-10 shrink-0 rounded-full sm:size-8"
             onclick={onStop}
             type="button"
           >
@@ -184,7 +189,7 @@
         <PromptInputAction tooltip={sendTooltip}>
           <Button
             size="icon"
-            class="size-8 shrink-0 rounded-full"
+            class="size-10 shrink-0 rounded-full sm:size-8"
             onclick={onSubmit}
             disabled={!canSend}
             type="button"

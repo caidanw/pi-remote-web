@@ -139,7 +139,7 @@
 {#if options.length > 0}
   <!-- no truncate: overflow:hidden on <select> blanks the selected label in WebKit -->
   <select
-    class="h-7 min-w-0 max-w-[min(18rem,100%)] rounded-full border-0 bg-muted/70 px-2.5 text-[11px] font-medium text-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 dark:bg-muted/40"
+    class="h-10 w-full min-w-0 max-w-[18rem] rounded-full border-0 bg-muted/70 px-2.5 text-xs font-medium text-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:h-7 sm:text-[11px] dark:bg-muted/40"
     value={value}
     disabled={disabled || busy || loading}
     onchange={onSelectChange}
@@ -158,7 +158,7 @@
   <Button
     variant="ghost"
     size="sm"
-    class="h-7 max-w-[18rem] rounded-full bg-muted/70 px-2.5 text-[11px] font-medium dark:bg-muted/40"
+    class="h-10 w-full max-w-[18rem] justify-start truncate rounded-full bg-muted/70 px-2.5 text-xs font-medium sm:h-7 sm:text-[11px] dark:bg-muted/40"
     onclick={cycle}
     disabled={disabled || busy}
     title={model?.provider && model?.id ? `${model.provider}/${model.id}` : "Cycle model"}

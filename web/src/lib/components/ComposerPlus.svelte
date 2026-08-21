@@ -41,11 +41,11 @@
         {...props}
         type="button"
         {disabled}
-        class="inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-border/80 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+        class="inline-flex size-10 shrink-0 items-center justify-center rounded-full border border-border/80 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50 sm:size-7"
         aria-label="Add"
         title="Add"
       >
-        <Plus class="size-3.5" />
+        <Plus class="size-4 sm:size-3.5" />
       </button>
     {/snippet}
   </DropdownMenu.Trigger>
