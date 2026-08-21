@@ -334,6 +334,7 @@ const MIME = {
   ".jpeg": "image/jpeg",
   ".woff2": "font/woff2",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
   ".map": "application/json",
   ".ogg": "audio/ogg",
   ".mp3": "audio/mpeg",

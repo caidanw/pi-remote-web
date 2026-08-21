@@ -794,7 +794,7 @@
 </script>
 
 {#if authReady && !authRequired}
-<div class="flex h-svh w-full overflow-hidden bg-background text-foreground">
+<div class="pi-app-shell flex h-svh w-full overflow-hidden bg-background text-foreground">
   {#if sidebarOpen}
     <!-- Phones: overlay the chat and dim it; tablets and up keep the split layout. -->
     <button
