@@ -31,6 +31,7 @@ body,
 }
 
 body {
+  background: var(--pi-canvas);
   font-family: var(--font-inter);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
