@@ -2062,6 +2062,7 @@
     color: hsl(0 0% 98%);
   }
   .chat-footer {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
     background: var(--pi-canvas);
   }
 
