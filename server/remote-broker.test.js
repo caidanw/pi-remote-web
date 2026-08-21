@@ -103,31 +103,73 @@ describe("remote broker", () => {
 
     client.publish({
       type: "message_start",
-      message: { id: "m1", role: "assistant", content: [{ type: "text", text: "partial" }] },
+      message: { role: "assistant", timestamp: 100, stopReason: "pending", content: [] },
     });
-    await waitFor(() => broker.getMessages("terminal").some((m) => m.id === "m1"));
+    await waitFor(() => broker.getMessages("terminal").length === 1);
 
+    client.publish({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        timestamp: 100,
+        responseId: "response-1",
+        stopReason: "pending",
+        content: [{ type: "text", text: "partial" }],
+      },
+    });
     client.publish({
       type: "message_end",
       message: {
-        id: "m1",
         role: "assistant",
+        timestamp: 100,
+        responseId: "response-1",
         stopReason: "stop",
         content: [{ type: "text", text: "final answer" }],
       },
     });
     await waitFor(() => broker.getMessages("terminal").at(-1)?.stopReason === "stop");
 
-    const transcript = broker.getMessages("terminal");
-    const streamed = transcript.filter((m) => m.id === "m1");
-    assert.equal(streamed.length, 1, "a completed message replaces its streaming copy");
+    let transcript = broker.getMessages("terminal");
+    const streamed = transcript.filter((message) => message.timestamp === 100);
+    assert.equal(streamed.length, 1, "a completed message replaces its id-less streaming copy");
     assert.equal(streamed[0].content[0].text, "final answer");
 
     client.publish({
-      type: "message_end",
-      message: { id: "m2", role: "user", content: [{ type: "text", text: "next" }] },
+      type: "message_start",
+      message: { role: "user", timestamp: 200, content: [{ type: "text", text: "next" }] },
     });
-    await waitFor(() => broker.getMessages("terminal").at(-1)?.id === "m2");
+    client.publish({
+      type: "message_end",
+      message: { role: "user", timestamp: 200, content: [{ type: "text", text: "next" }] },
+    });
+    await waitFor(() => broker.getMessages("terminal").at(-1)?.role === "user");
+    transcript = broker.getMessages("terminal");
+    assert.equal(
+      transcript.filter((message) => message.timestamp === 200).length,
+      1,
+      "message_start and message_end share one transcript row",
+    );
+
+    client.publish({
+      type: "message_start",
+      message: { role: "toolResult", toolCallId: "call-1", timestamp: 300, content: [] },
+    });
+    client.publish({
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: "call-1",
+        timestamp: 300,
+        content: [{ type: "text", text: "done" }],
+      },
+    });
+    await waitFor(() => broker.getMessages("terminal").at(-1)?.toolCallId === "call-1");
+    transcript = broker.getMessages("terminal");
+    assert.equal(
+      transcript.filter((message) => message.toolCallId === "call-1").length,
+      1,
+      "tool result start and end share one transcript row",
+    );
   });
 
   it("keeps a runtime-following stream across terminal /new while old paths unpin", async () => {

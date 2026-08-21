@@ -35,11 +35,24 @@ function upsertMessage(snapshot, message) {
 /** @param {unknown} message */
 function messageIdentity(message) {
   if (!isRecord(message)) return null;
-  for (const field of ["_key", "id", "responseId"]) {
+  for (const field of ["_key", "id"]) {
     const value = message[field];
     if (typeof value === "string" && value) return `${field}:${value}`;
   }
-  return null;
+  if (message.role === "toolResult") {
+    const toolCallId = message.toolCallId || message.tool_use_id;
+    if (typeof toolCallId === "string" && toolCallId) return `tool:${toolCallId}`;
+  }
+  const timestamp = message.timestamp;
+  if (
+    typeof message.role === "string" &&
+    ((typeof timestamp === "string" && timestamp) ||
+      (typeof timestamp === "number" && Number.isFinite(timestamp)))
+  ) {
+    return `timestamp:${message.role}:${timestamp}`;
+  }
+  const responseId = message.responseId;
+  return typeof responseId === "string" && responseId ? `responseId:${responseId}` : null;
 }
 
 function snapshotKey(frame) {

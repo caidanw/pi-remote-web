@@ -376,6 +376,8 @@
     }, 80);
     return () => clearInterval(id);
   });
+  /** Keep stream lifecycle keyed to identity, not parent metadata patches. */
+  const activeSessionId = $derived(session?.id ?? null);
   /** Prefer local (live) model; fall back to session prop so picker never blanks. */
   const activeModel = $derived(model ?? session?.model);
   const hiddenMsgCount = $derived(
@@ -1004,7 +1006,7 @@
 
   // Only re-bind when session *id* changes — not on meta patches (flicker root cause)
   $effect(() => {
-    const id = session?.id ?? null;
+    const id = activeSessionId;
 
     // Already wired — keep SSE open (cleanup must not close on same-id re-entry)
     if (id && wiredId === id) {
