@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { SessionRow } from "$lib/api";
+  import { activityMs, newestActivityFirst } from "$lib/session-activity";
   import Separator from "agentic-ui-kit/components/ui/separator.svelte";
   import ThemeToggle from "agentic-ui-kit/components/ui/theme-toggle.svelte";
   import SoundToggle from "$lib/components/SoundToggle.svelte";
@@ -9,7 +10,6 @@
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import MessageSquarePlus from "@lucide/svelte/icons/message-square-plus";
-  import GripVertical from "@lucide/svelte/icons/grip-vertical";
   import Archive from "@lucide/svelte/icons/archive";
   import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import Command from "@lucide/svelte/icons/command";
@@ -47,8 +47,6 @@
   /** Folder keys the user collapsed. Absent = open (default expanded). */
   let collapsed = $state(new Set<string>());
 
-  const FOLDER_ORDER_KEY = "pi-remote-web-sidebar-folder-order";
-  const SESSION_ORDER_KEY = "pi-remote-web-sidebar-session-order";
   /** Demoted from Active → Recent (not hidden). Legacy key name kept. */
   const ARCHIVED_KEY = "pi-remote-web-sidebar-archived";
   const WIDTH_KEY = "pi-remote-web-sidebar-width";
@@ -133,28 +131,10 @@
     }
   }
 
-  let folderOrder = $state<string[]>(loadJson(FOLDER_ORDER_KEY, []));
-  let sessionOrder = $state<string[]>(loadJson(SESSION_ORDER_KEY, []));
   /** User moved these out of Active into Recent (still visible). */
   let demoted = $state(new Set<string>(loadJson<string[]>(ARCHIVED_KEY, [])));
   /** How many Recent rows to show (grows by RECENT_PAGE via Show more). */
   let recentShown = $state(RECENT_PAGE);
-
-  type Drag =
-    | { kind: "folder"; key: string }
-    | { kind: "session"; key: string; folder: string }
-    | null;
-  let drag = $state<Drag>(null);
-
-  function saveFolderOrder(keys: string[]) {
-    folderOrder = keys;
-    saveJson(FOLDER_ORDER_KEY, keys);
-  }
-
-  function saveSessionOrder(keys: string[]) {
-    sessionOrder = keys;
-    saveJson(SESSION_ORDER_KEY, keys);
-  }
 
   function sk(s: SessionRow) {
     return s.path || s.id;
@@ -202,19 +182,6 @@
     );
     if (s && isDemoted(s)) clearDemotion(s);
   });
-
-  function activityMs(s: SessionRow): number {
-    if (s.modified) {
-      const t = new Date(s.modified).getTime();
-      if (Number.isFinite(t)) return t;
-    }
-    if (s.created) {
-      const t = new Date(s.created).getTime();
-      if (Number.isFinite(t)) return t;
-    }
-    // Hub-open with no timestamps — treat as active now
-    return s.running ? Date.now() : 0;
-  }
 
   /** Active: hub-running or activity within 24h, unless user moved to Recent. */
   function isActive(s: SessionRow): boolean {
@@ -265,89 +232,25 @@
     return !collapsed.has(key);
   }
 
-  function rankSort<T>(items: T[], keyOf: (t: T) => string, order: string[]): T[] {
-    const rank = new Map(order.map((k, i) => [k, i]));
-    return [...items].sort((a, b) => {
-      const ra = rank.has(keyOf(a)) ? rank.get(keyOf(a))! : Number.POSITIVE_INFINITY;
-      const rb = rank.has(keyOf(b)) ? rank.get(keyOf(b))! : Number.POSITIVE_INFINITY;
-      if (ra !== rb) return ra - rb;
-      return 0;
-    });
-  }
-
   function groupByFolder(list: SessionRow[]) {
     const map = new Map<string, SessionRow[]>();
-    for (const s of list) {
-      const key = s.cwd || "";
-      let items = map.get(key);
-      if (!items) map.set(key, (items = []));
-      items.push(s);
+    for (const session of list) {
+      const cwd = session.cwd || "";
+      const items = map.get(cwd) ?? [];
+      items.push(session);
+      map.set(cwd, items);
     }
-    const entries = [...map.entries()].map(([cwd, items]) => ({
-      key: cwd || "__other__",
-      cwd,
-      name: folderLabel(cwd),
-      items: rankSort(items, sk, sessionOrder),
-    }));
-    return rankSort(entries, (g) => g.key, folderOrder);
+    return [...map.entries()]
+      .map(([cwd, items]) => ({
+        key: cwd || "__other__",
+        cwd,
+        name: folderLabel(cwd),
+        items: items.sort(newestActivityFirst),
+      }))
+      .sort((a, b) => newestActivityFirst(a.items[0], b.items[0]));
   }
 
   const groups = $derived(groupByFolder(openSessions));
-
-  function reorder(keys: string[], fromKey: string, toKey: string): string[] | null {
-    const from = keys.indexOf(fromKey);
-    const to = keys.indexOf(toKey);
-    if (from < 0 || to < 0 || from === to) return null;
-    const next = [...keys];
-    next.splice(from, 1);
-    next.splice(to, 0, fromKey);
-    return next;
-  }
-
-  function onFolderDragStart(e: DragEvent, key: string) {
-    drag = { kind: "folder", key };
-    e.dataTransfer?.setData("text/plain", `folder:${key}`);
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-  }
-
-  function onFolderDragOver(e: DragEvent, key: string) {
-    if (!drag || drag.kind !== "folder" || drag.key === key) return;
-    e.preventDefault();
-    const vis = groups.map((g) => g.key);
-    const reordered = reorder(vis, drag.key, key);
-    if (!reordered) return;
-    const rest = folderOrder.filter((k) => !reordered.includes(k));
-    const next = [...reordered, ...rest];
-    if (next.join("\0") !== folderOrder.join("\0")) saveFolderOrder(next);
-  }
-
-  function onSessionDragStart(e: DragEvent, s: SessionRow, folder: string) {
-    e.stopPropagation();
-    const key = sk(s);
-    drag = { kind: "session", key, folder };
-    e.dataTransfer?.setData("text/plain", `session:${key}`);
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-  }
-
-  function onSessionDragOver(e: DragEvent, s: SessionRow, folder: string) {
-    if (!drag || drag.kind !== "session" || drag.folder !== folder) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const toKey = sk(s);
-    if (drag.key === toKey) return;
-    const g = groups.find((x) => x.key === folder);
-    if (!g) return;
-    const vis = g.items.map(sk);
-    const reordered = reorder(vis, drag.key, toKey);
-    if (!reordered) return;
-    const rest = sessionOrder.filter((k) => !reordered.includes(k));
-    const next = [...reordered, ...rest];
-    if (next.join("\0") !== sessionOrder.join("\0")) saveSessionOrder(next);
-  }
-
-  function onDragEnd() {
-    drag = null;
-  }
 </script>
 
 <aside
@@ -413,13 +316,9 @@
       {:else}
         {#each groups as g (g.key)}
           {@const open = isOpen(g.key)}
-          <div
-            class={drag?.kind === "folder" && drag.key === g.key ? "opacity-50" : ""}
-            ondragover={(e) => onFolderDragOver(e, g.key)}
-          >
+          <div>
             <div
               class="sidebar-row group flex w-full items-center rounded-md text-xs font-medium text-foreground hover:bg-muted/80"
-              class:has-two-actions={Boolean(g.cwd)}
             >
               <button
                 type="button"
@@ -440,17 +339,6 @@
                 <span class="min-w-0 flex-1 truncate">{g.name}</span>
               </button>
               <div class="sidebar-row-actions">
-                <button
-                  type="button"
-                  class="flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
-                  title="Drag to reorder"
-                  aria-label="Drag to reorder {g.name}"
-                  draggable="true"
-                  ondragstart={(e) => onFolderDragStart(e, g.key)}
-                  ondragend={onDragEnd}
-                >
-                  <GripVertical class="size-3.5" />
-                </button>
                 {#if g.cwd}
                   <button
                     type="button"
@@ -467,13 +355,9 @@
             {#if open}
               <ul class="ml-3 flex flex-col gap-0.5 border-l border-border pl-2">
                 {#each g.items as s (s.id + (s.path ?? ""))}
-                  {@const key = sk(s)}
-                  <li
-                    class={drag?.kind === "session" && drag.key === key ? "opacity-50" : ""}
-                    ondragover={(e) => onSessionDragOver(e, s, g.key)}
-                  >
+                  <li>
                     <div
-                      class="sidebar-row has-two-actions group/item flex items-center rounded-lg transition-colors hover:bg-muted/80
+                      class="sidebar-row group/item flex items-center rounded-lg transition-colors hover:bg-muted/80
                         {selectedId === s.id ? 'bg-muted' : ''}"
                     >
                       <button
@@ -516,17 +400,6 @@
                         </div>
                       </button>
                       <div class="sidebar-row-actions">
-                        <button
-                          type="button"
-                          class="flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
-                          title="Drag to reorder"
-                          aria-label="Drag to reorder session"
-                          draggable="true"
-                          ondragstart={(e) => onSessionDragStart(e, s, g.key)}
-                          ondragend={onDragEnd}
-                        >
-                          <GripVertical class="size-3.5" />
-                        </button>
                         <button
                           type="button"
                           class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -672,11 +545,6 @@
   .sidebar-row:hover .sidebar-row-main,
   .sidebar-row:focus-within .sidebar-row-main {
     padding-right: 2.25rem;
-  }
-
-  .sidebar-row.has-two-actions:hover .sidebar-row-main,
-  .sidebar-row.has-two-actions:focus-within .sidebar-row-main {
-    padding-right: 3.75rem;
   }
 
   .sidebar-row:hover .sidebar-row-actions,
