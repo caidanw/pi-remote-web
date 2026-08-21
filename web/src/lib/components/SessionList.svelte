@@ -597,7 +597,7 @@
     </div>
   </div>
   {#if onOpenPalette}
-    <div class="shrink-0 border-t border-border p-2">
+    <div class="shrink-0 border-t border-border p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <button
         type="button"
         class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
