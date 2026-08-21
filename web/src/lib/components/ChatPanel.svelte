@@ -46,7 +46,9 @@
     isComposerCommand,
     isFinalAssistantResponse,
     messageTimestamp,
+    showStandaloneWorking,
     startsTopLevelTurn,
+    workSectionOpen,
   } from "$lib/work-section";
   import ChatComposer from "$lib/components/ChatComposer.svelte";
   import MessageBubble from "$lib/components/MessageBubble.svelte";
@@ -754,6 +756,7 @@
   let sawServerStreaming = false;
   let lastPromptAt = 0;
   let workDurations = $state<Record<string, number>>({});
+  let workSectionPreferences = $state<Record<string, boolean>>({});
 
   function recordWorkDuration() {
     if (!(lastPromptAt > 0)) return;
@@ -1032,6 +1035,7 @@
         fetchLimit = FETCH_WINDOW;
         hasOlderHistory = false;
         workDurations = {};
+        workSectionPreferences = {};
         lastPromptAt = 0;
         streaming = false;
         bashRunning = false;
@@ -1078,6 +1082,7 @@
       stream.bindSession(id, { messages: cached });
       messages = stream.messages.slice();
       workDurations = {};
+      workSectionPreferences = {};
       streaming = false;
       bashRunning = false;
       awaitingSettle = false;
@@ -1626,6 +1631,7 @@
           : "";
       return {
         ...turn,
+        workKey: turnKey || messageKey(turn.items[0]!.m, turn.startIndex),
         userItems,
         directItems,
         workItems,
@@ -1635,6 +1641,10 @@
       };
     });
   });
+
+  const hasActiveWorkSection = $derived(
+    messageTurns.some((turn) => !turn.completed && turn.workItems.length > 0),
+  );
 
   const promptBoxClass = $derived(
     `border-black/[0.08] bg-white shadow-sm dark:border-white/10 dark:bg-zinc-900 ${
@@ -1871,10 +1881,19 @@
               {#if turn.workItems.length > 0}
                 <details
                   class="group/work min-w-0"
-                  open={!turn.completed}
+                  open={workSectionOpen(workSectionPreferences[turn.workKey], turn.completed)}
                 >
                   <summary
                     class="flex w-fit cursor-pointer list-none items-center gap-1.5 text-[12px] font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden"
+                    onclick={(event) => {
+                      const details = event.currentTarget.parentElement as HTMLDetailsElement;
+                      requestAnimationFrame(() => {
+                        workSectionPreferences = {
+                          ...workSectionPreferences,
+                          [turn.workKey]: details.open,
+                        };
+                      });
+                    }}
                   >
                     {#if !turn.completed}
                       <span class="size-1.5 animate-pulse rounded-full bg-amber-500" aria-hidden="true"></span>
@@ -1944,7 +1963,7 @@
               <span bind:this={spinEl} class="font-mono text-primary" aria-hidden="true">⠋</span>
               <span>bash</span>
             </div>
-          {:else if busy || sending}
+          {:else if showStandaloneWorking(busy, sending, hasActiveWorkSection)}
             <!-- A turn can be accepted before its first assistant message arrives. -->
             <div
               class="flex items-center gap-1.5 px-0.5 text-xs text-muted-foreground"
