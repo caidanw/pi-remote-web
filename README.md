@@ -20,7 +20,12 @@ Git and path installs work from the repository because package-root `dist/` is
 committed. After changing `web/`, run `npm install --prefix web && npm run build`
 before testing the local package with `pi install <path>`.
 
-The renamed package is not published to npm yet.
+The renamed package is not published to npm yet. To put the `pi-remote-web` CLI
+(service, pairing) on your PATH from a checkout:
+
+```bash
+npm install && npm link   # undo: npm unlink -g pi-remote-web
+```
 
 ## Usage
 
