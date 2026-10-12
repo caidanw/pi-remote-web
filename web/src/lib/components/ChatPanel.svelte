@@ -455,6 +455,9 @@
   let pullStartY: number | null = null;
   let pullDistance = $state(0);
   const canLoadOlder = $derived(hasOlderHistory || hiddenMsgCount > 0);
+  const pullReady = $derived(pullDistance >= PULL_TRIGGER);
+  // Touch screens pull; mice click. Only the label differs.
+  const touchInput = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
   function onPullStart(event: TouchEvent) {
     pullStartY = scroller && scroller.scrollTop <= 0 && canLoadOlder && !loadingOlder
@@ -1926,10 +1929,17 @@
             <button
               type="button"
               class="mx-auto rounded-full border border-border/70 bg-background/80 px-3 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              class:text-foreground={pullReady}
               disabled={loadingOlder}
               onclick={() => void loadOlder()}
             >
-              {loadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
+              {loadingOlder
+                ? "Loading earlier messages…"
+                : !touchInput
+                  ? "Load earlier messages"
+                  : pullReady
+                    ? "Release to load earlier messages"
+                    : "Pull to load earlier messages"}
             </button>
           {/if}
           {#each messageTurns as turn (turn.startIndex)}
@@ -2129,20 +2139,6 @@
         </div>
       </div>
 
-      {#if pullDistance > 0 || loadingOlder}
-        <!-- Floats over the list so it never shifts the message you're reading. -->
-        <div
-          class="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-border/80 bg-background/95 px-3 py-1 text-[11px] font-medium text-muted-foreground shadow-md backdrop-blur-sm"
-          style:opacity={loadingOlder ? 1 : Math.min(1, pullDistance / PULL_TRIGGER)}
-          role="status"
-        >
-          {loadingOlder
-            ? "Loading earlier messages…"
-            : pullDistance >= PULL_TRIGGER
-              ? "Release to load earlier messages"
-              : "Pull to load earlier messages"}
-        </div>
-      {/if}
       {#if !stickBottom}
         <button
           type="button"
