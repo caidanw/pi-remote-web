@@ -60,6 +60,8 @@ export function serviceConfig(options = {}) {
       PI_REMOTE_WEB_PUBLIC_URL: options.publicUrl ?? process.env.PI_REMOTE_WEB_PUBLIC_URL,
       PI_REMOTE_WEB_SOCKET: options.socketPath ?? process.env.PI_REMOTE_WEB_SOCKET,
       PI_REMOTE_WEB_SERVICE_DIR: stateDir,
+      // launchd's default PATH lacks Homebrew/nvm; keep the installer's so workers find `pi` and tools.
+      PATH: options.path ?? process.env.PATH,
     },
   };
 }

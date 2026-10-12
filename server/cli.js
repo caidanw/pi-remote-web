@@ -115,6 +115,7 @@ const socketPath =
   process.env.PI_REMOTE_WEB_SOCKET ??
   join(getAgentDir(), "remote", "pi-remote-web.sock");
 const workers = new RpcWorkerManager();
+console.log(`[pi-remote-web] workers run ${workers.command.join(" ")}`);
 const worktrees = new WorktreeManager();
 const broker = new RemoteBroker({
   socketPath,

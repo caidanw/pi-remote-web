@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { accessSync, constants } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
@@ -16,6 +17,26 @@ const RING_MAX = 500;
 const REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 const RPC_ENTRY = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent/rpc-entry"));
+
+/**
+ * Workers run the user's installed `pi` so they load the same Pi version and
+ * extensions as their terminals; the bundled copy is only a fallback.
+ * @returns {string[]} command + leading args; `--session <path>` is appended
+ */
+export function resolvePiCommand(env = process.env) {
+  if (env.PI_REMOTE_WEB_PI_BIN) return [env.PI_REMOTE_WEB_PI_BIN, "--mode", "rpc"];
+  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, "pi");
+    try {
+      accessSync(candidate, constants.X_OK);
+      return [candidate, "--mode", "rpc"];
+    } catch {
+      // not here; keep looking
+    }
+  }
+  return [process.execPath, RPC_ENTRY];
+}
 
 function defaultSessionDir(cwd) {
   const resolved = path.resolve(cwd);
@@ -62,9 +83,11 @@ export class RpcWorkerManager {
     this.guardOptions = options.guardOptions;
     /** Paths this daemon has already owned; reopening them is never a foreign writer. */
     this.ownedPaths = new Set();
-    this.rpcEntry = options.rpcEntry ?? RPC_ENTRY;
-    this.spawnProcess = options.spawnProcess ?? spawn;
     this.env = options.env;
+    this.command = options.rpcEntry
+      ? [process.execPath, options.rpcEntry]
+      : resolvePiCommand({ ...process.env, ...this.env });
+    this.spawnProcess = options.spawnProcess ?? spawn;
     this.sessionDir = options.sessionDir;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
@@ -421,8 +444,8 @@ export class RpcWorkerManager {
 
   #spawn(options) {
     const child = this.spawnProcess(
-      process.execPath,
-      [this.rpcEntry, "--session", options.path],
+      this.command[0],
+      [...this.command.slice(1), "--session", options.path],
       {
         cwd: options.cwd,
         env: {
@@ -495,10 +518,16 @@ export class RpcWorkerManager {
     });
     child.once("error", (error) => this.#exited(worker, error));
     child.once("exit", (code, signal) => {
+      const stderr = worker.stderr.trim();
+      if (worker.running && !worker.stopping && stderr) {
+        console.error(`[pi-remote-web] Pi RPC worker stderr (${options.path}):\n${stderr}`);
+      }
+      // The last lines usually name the cause (e.g. an extension that failed to load).
+      const reason = stderr.split("\n").filter((line) => line.trim()).slice(-2).join(" ").slice(-400);
       this.#exited(
         worker,
         worker.protocolError ??
-          new Error(`Pi RPC worker exited (${code ?? signal ?? "unknown"})`),
+          new Error(`Pi RPC worker exited (${code ?? signal ?? "unknown"})${reason ? `: ${reason}` : ""}`),
       );
     });
     return worker;

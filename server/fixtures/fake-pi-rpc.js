@@ -114,6 +114,9 @@ if (process.env.PI_TEST_BAD_OUTPUT === "malformed") {
 } else if (process.env.PI_TEST_BAD_OUTPUT === "missing-lf") {
   process.stdout.write("partial-frame");
   setTimeout(() => process.exit(1), 10);
+} else if (process.env.PI_TEST_BAD_OUTPUT === "crash") {
+  process.stderr.write("noise\nError: Failed to load extension \"x\"\nHint: start with pi -ne\n");
+  process.exit(1);
 }
 
 process.stdin.setEncoding("utf8");

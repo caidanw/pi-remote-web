@@ -7,7 +7,7 @@ import { once } from "node:events";
 import { spawn as spawnChild } from "node:child_process";
 import { afterEach, describe, it } from "node:test";
 import { acquireSessionLock, releaseSessionLock } from "../remote/session-lock.js";
-import { RpcWorkerManager } from "./rpc-workers.js";
+import { RpcWorkerManager, resolvePiCommand } from "./rpc-workers.js";
 import { createServer } from "./http.js";
 
 const fixtureRpc = fileURLToPath(new URL("./fixtures/fake-pi-rpc.js", import.meta.url));
@@ -15,6 +15,20 @@ const parentHarness = fileURLToPath(new URL("./fixtures/rpc-worker-parent.js", i
 const cleanups = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()();
+});
+
+describe("resolvePiCommand", () => {
+  it("prefers the installed pi on PATH, then the bundled entry", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "prw-pi-bin-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const pi = path.join(dir, "pi");
+    await writeFile(pi, "#!/bin/sh\n", { mode: 0o755 });
+    assert.deepEqual(resolvePiCommand({ PATH: `/nonexistent${path.delimiter}${dir}` }), [pi, "--mode", "rpc"]);
+    assert.deepEqual(resolvePiCommand({ PATH: dir, PI_REMOTE_WEB_PI_BIN: "/x/pi" }), ["/x/pi", "--mode", "rpc"]);
+    const fallback = resolvePiCommand({ PATH: "/nonexistent" });
+    assert.equal(fallback[0], process.execPath);
+    assert.match(fallback[1], /rpc-entry\.js$/);
+  });
 });
 
 async function fixture(options = {}) {
@@ -112,6 +126,25 @@ describe("browser-owned Pi RPC workers", () => {
     assert.equal(await readFile(auditFile, "utf8"), "slow first\n");
     await Promise.all([first, second]);
     assert.equal(await readFile(auditFile, "utf8"), "slow first\nsecond\n");
+  });
+
+  it("reports the worker's stderr when it crashes on startup", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-rpc-crash-"));
+    const manager = new RpcWorkerManager({
+      rpcEntry: fixtureRpc,
+      lockDir: path.join(root, "locks"),
+      env: { PI_TEST_BAD_OUTPUT: "crash" },
+      guardOptions: { recentWriteMs: 0 },
+    });
+    cleanups.push(async () => {
+      await manager.closeAll();
+      await rm(root, { recursive: true, force: true });
+    });
+    const sessionPath = await savedSession(root, "crash");
+    await assert.rejects(
+      manager.open({ cwd: root, path: sessionPath }),
+      /worker exited \(1\): Error: Failed to load extension "x" Hint: start with pi -ne$/,
+    );
   });
 
   it("treats malformed and oversized stdout as protocol-fatal", async () => {
