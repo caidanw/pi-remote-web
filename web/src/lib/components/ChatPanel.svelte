@@ -733,9 +733,7 @@
           break;
         case "refresh_snapshot":
           void load(id, { force: true, quiet: true });
-          if (ef.truncated) {
-            error = `Transcript snapshot omitted ${ef.droppedMessages ?? "some"} older messages`;
-          }
+          // A trimmed snapshot is normal for long sessions; older history loads on pull.
           break;
         case "messages":
           paint = true;

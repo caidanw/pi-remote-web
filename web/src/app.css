@@ -39,6 +39,12 @@ body,
   overscroll-behavior: none;
 }
 
+/* The app may be taller than iOS's (buggy) viewport; the page itself never scrolls. */
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   background: var(--pi-canvas);
   font-family: var(--font-inter);
@@ -47,6 +53,8 @@ body {
 }
 
 .pi-app-shell {
+  /* --pi-app-height: set by index.html when iOS reports a short viewport. */
+  height: var(--pi-app-height, 100svh);
   padding-top: var(--pi-top-inset);
   padding-right: env(safe-area-inset-right);
   padding-left: env(safe-area-inset-left);
