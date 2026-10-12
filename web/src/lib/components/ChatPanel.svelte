@@ -1630,6 +1630,8 @@
     for (let j = 0; j < slice.length; j++) {
       const i = j + hiddenMsgCount;
       const m = slice[j]!;
+      // Pi records a system-prompt snapshot (role "system") per session; it isn't chat.
+      if (m.role === "system") continue;
       const followsStandaloneCommand = Boolean(
         cur?.items[0] && isComposerCommand(cur.items[0].m),
       );
