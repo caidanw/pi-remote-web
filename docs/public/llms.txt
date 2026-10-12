@@ -1,153 +1,54 @@
-# Pi Remote Web LLM instructions
+# Pi Remote Web
 
-Pi Remote Web is a localhost multi-session browser UI for Pi. Pi owns AgentSession,
-models, auth, tools, skills, extensions, and session JSONL files. Pi Remote Web is a
-thin Svelte client plus Node http/SSE hub over @earendil-works/pi-coding-agent.
+> A browser and phone UI for Pi coding-agent sessions running on a Mac. Install it as a Pi package, open sessions with `/remote-web`, or run it as a background service and pair a phone over Tailscale to follow and steer the agent away from your desk.
 
-## Install / use facts
+Pi owns the sessions, models, provider auth, tools, skills, and extensions; Pi Remote Web displays and drives them. The server only listens on `127.0.0.1`. Phones reach it through Tailscale Serve (HTTPS) and must be paired once with a QR code; pairing then lasts until revoked.
 
-```bash
-pi install ~/Projects/pi-remote-web
-```
+## Install
 
-Inside pi:
+- `pi install <path-or-git-url>` adds the `/remote-web` command and the adapter that connects interactive Pi terminals to the background service. Requires Node.js 20+ and a working Pi.
+- From a checkout, `npm install && npm link` puts the `pi-remote-web` CLI on PATH.
 
-```text
-/remote-web                          # live-attach current session + open browser
-/remote-web <sessionId>              # open session id/path
-/remote-web open <sessionId> 4000    # custom port
-/remote-web stop                     # stop host
-```
+## Use inside Pi
 
-Localhost only: 127.0.0.1. Do not add public bind/auth unless explicitly asked.
-No Express/socket.io/tRPC; use node:http and SSE.
+- `/remote-web` opens the current session in the browser (live).
+- `/remote-web <sessionId>` opens another session; `/remote-web open <sessionId> <port>` uses a custom port.
+- `/remote-web stop` shuts it down.
 
-## Repository map
+## Phone access (background service, macOS)
 
-```text
-extensions/web.ts        # pi /remote-web command, in-process attach, port takeover
-server/http.js           # REST + static dist + SSE endpoint
-server/hub.js            # multi-session AgentSession lifecycle (red zone)
-server/sse-protocol.js   # SSE replay/snapshot policy (red zone)
-server/customization.js  # local config + safe asset loading
-web/src/main.ts          # Svelte bootstrap
-web/src/App.svelte       # routing/open session shell
-web/src/lib/api.ts       # browser API client
-web/src/lib/chat-stream.ts # client stream merge (red zone)
-web/src/lib/components/  # UI chrome/components
-web/src/lib/plugins/     # message plugin registry
-web/src/lib/kit/         # vendored UI kit
-web/src/lib/customization.ts # applies local config to UI
-web/src/lib/feedback.ts  # sound/reduced-motion gating
-dist/                    # built web UI shipped by package
-docs/                    # human landing page
-```
+1. `tailscale serve --bg --https=443 http://127.0.0.1:3847` publishes the port on your tailnet (use Serve, never Funnel).
+2. `pi-remote-web install` installs and starts the LaunchAgent.
+3. `pi-remote-web pair` prints a QR code and a five-minute single-use pairing link. Scan it inside the installed home-screen app (iOS keeps home-screen app cookies separate from Safari).
 
-## Commands
+Other commands: `pi-remote-web status | doctor | logs | restart | stop | start | uninstall | revoke-all | help`. `pi-remote-web daemon` runs the server in the foreground.
 
-```bash
-npm test                 # server + stream contracts
-npm run check            # Svelte/TypeScript
-npm run build            # rebuild package-root dist/
-npm run check:docs       # Astro docs check
-```
+Terminal sessions appear live once their Pi has the adapter loaded; a terminal started before installing it connects with `/reload`. Sessions owned by an unconnected terminal open as a read-only copy.
 
-If web/ changes and the package should ship it, run `npm run build`.
+## Configuration
 
-## Safe change boundaries
+Environment variables:
 
-Prefer the highest zone that works.
+- `PI_REMOTE_WEB_PORT` (default `3847`): HTTP port.
+- `PI_REMOTE_WEB_PUBLIC_URL`: HTTPS URL accepted for pairing; detected from Tailscale Serve when unset.
+- `PI_REMOTE_WEB_PI_BIN`: `pi` executable used for browser sessions; defaults to `pi` on PATH.
+- `PI_REMOTE_WEB_SESSION_IDLE_MS` (default one day): close in-process sessions with no viewers; `0` disables.
 
-### Green: intended customization
-
-- `web/src/lib/plugins/` message renderers
-- Theme tokens / CSS variables / FOUC-safe theme edits
-- Presentation-only UI chrome in `web/src/lib/components/*`
-- Docs / README / llms.txt
-- Client wrappers for existing API routes in `web/src/lib/api.ts`
-
-### Yellow: clear need, small diff
-
-- New REST capability: `hub -> http.js -> api.ts -> UI`
-- `CommandPalette.svelte`: add one command/action, do not restructure
-- `ChatPanel.svelte`, `ComposerPlus.svelte`: careful, streaming UX
-- `App.svelte`, `SessionList.svelte`: routing/sidebar semantics
-- One vendored kit component if already used
-
-### Red: bugfix only + tests
-
-- `server/hub.js` lifecycle, locks, prompt queues, dispose/attach
-- `server/sse-protocol.js` and SSE branch in `server/http.js`
-- `web/src/lib/chat-stream.ts` seq gate/snapshot/message merge
-- Trust boundary, localhost/CORS assumptions
-
-## Local customization contract
-
-Config locations, merge order:
-
-1. Built-in defaults
-2. `~/.pi/agent/pi-remote-web/config.json`
-3. `.pi/pi-remote-web/config.json` only after pi trusts the project
-
-Supported v1 keys:
+Optional `~/.pi/agent/pi-remote-web/config.json` (a project's `.pi/pi-remote-web/config.json` applies once Pi trusts the project):
 
 ```json
 {
   "version": 1,
-  "appearance": {
-    "sidebarWidth": 320,
-    "rightSidebarWidth": 440,
-    "density": "compact"
-  },
+  "appearance": { "sidebarWidth": 360, "rightSidebarWidth": 360, "density": "comfortable" },
   "motion": { "intensity": "subtle" },
-  "sound": {
-    "enabled": true,
-    "volume": 0.2,
-    "turnComplete": "./sounds/complete.ogg"
-  },
-  "theme": {
-    "accent": "#7c6cff",
-    "radius": "10px"
-  }
+  "sound": { "enabled": true, "volume": 0.2, "turnComplete": "./sounds/complete.ogg" },
+  "theme": { "accent": "#7c6cff", "radius": "0.6rem" }
 }
 ```
 
-Validation rules:
+Limits: sidebar widths 200–600 and 240–720 px; density compact, comfortable, or spacious; motion none, subtle, or full (reduced-motion settings win); volume 0–1; sounds are local `.ogg`, `.mp3`, or `.wav` paths relative to the config file; accent `#rrggbb`; radius in px or rem.
 
-- `appearance.sidebarWidth`: number 200..600
-- `appearance.rightSidebarWidth`: number 240..720
-- `appearance.density`: compact | comfortable | spacious
-- `motion.intensity`: none | subtle | full; prefers-reduced-motion wins
-- `sound.enabled`: boolean
-- `sound.volume`: number 0..1
-- `sound.turnComplete`: relative local path only
-- `theme.accent`: #rrggbb or empty
-- `theme.radius`: px or rem
+## Links
 
-Assets are served only from resolved customization directories. Reject remote
-URLs and `..` traversal. Browser-playable audio: .ogg/.mp3/.wav.
-
-## How to customize code
-
-- Custom message rendering: register in `web/src/lib/plugins/registry.ts` via a
-  small plugin file imported by bootstrap/App. Match narrowly by role/customType.
-- Theme/UI tokens: prefer CSS variables in `web/src/app.css` or kit tokens.
-- UI chrome: edit the smallest component that owns the visible element.
-- New backend capability: add hub method, route in `server/http.js`, typed helper
-  in `web/src/lib/api.ts`, then minimal UI.
-
-## Anti-patterns
-
-- Replacing SSE with WebSockets
-- Adding Express, socket.io, tRPC, or a second server framework
-- Duplicating pi model/auth/settings config
-- Runtime arbitrary Svelte/JS loading for user config
-- Public plugin manifests/marketplace scaffolding
-- Deep `MessageBubble` edits when a message plugin works
-- Wide refactors of hub/chat-stream while adding UI features
-
-## Output expectation for coding agents
-
-Make the smallest working diff. Reuse existing code before adding abstractions.
-For non-trivial logic, add or update one focused test. Keep explanations short
-and list files changed plus checks run.
+- [Source and README](https://github.com/caidanw/pi-remote-web)
+- [Contributor and coding-agent guide](https://github.com/caidanw/pi-remote-web/blob/main/AGENTS.md)

@@ -42,9 +42,7 @@ In any pi session:
 
 `/remote-web` ensures the host runs in this process (takes over the port if needed), then opens the browser on the session. Pass a **session id** (or path) to target a specific chat; omit it to use the current TUI session.
 
-How this relates to pi (disk vs live, ownership): [ownership documentation](./docs/src/content/docs/concepts/ownership.md).
-
-Localhost only (`127.0.0.1`). No auth — treat it like the TUI on your machine.
+The server listens on `127.0.0.1` only. Phones and other devices reach it through Tailscale Serve and must be paired once (see [macOS service](#macos-service)).
 
 ## Features
 
@@ -107,10 +105,10 @@ tailscale serve --bg --https=443 http://127.0.0.1:3847
 
 Project home: [github.com/caidanw/pi-remote-web](https://github.com/caidanw/pi-remote-web).
 
-For coding agents: read [`llms.txt`](./llms.txt) before changing code. It contains the repo map, safe change boundaries, customization contract, anti-patterns, and test commands.
+Contributors and coding agents: read [`AGENTS.md`](./AGENTS.md) before changing code. The docs site serves a user-facing [`llms.txt`](./docs/public/llms.txt).
 
 ```bash
 npm install --prefix docs
 npm run dev:docs       # local docs server
-npm run build:docs     # TanStack Start build in docs/dist/
+npm run build:docs     # Vite build in docs/dist/
 ```
