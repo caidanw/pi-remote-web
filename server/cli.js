@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createServer } from "./http.js";
+import { hub } from "./hub.js";
 import { RemoteBroker } from "./remote-broker.js";
 import { RpcWorkerManager } from "./rpc-workers.js";
 import { WorktreeManager } from "./worktrees.js";
@@ -132,6 +133,8 @@ const app = createServer({
   auth: insecure ? false : auth,
 });
 app.listen();
+// Warm the session list so the first page load doesn't wait for a full disk scan.
+void hub.listDisk().catch(() => {});
 
 const service = serviceConfig({ port, publicUrl });
 let statusTimer;

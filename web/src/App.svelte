@@ -128,6 +128,8 @@
   let defaultCwd = $state("");
   /** Prevent double-click open storms */
   let opening = $state(false);
+  /** First load with a session URL: avoid flashing the home screen before it resolves. */
+  let booting = $state(true);
   let releasing = $state(false);
 
   $effect(() => {
@@ -703,10 +705,14 @@
   });
 
   async function loadAuthenticatedUi() {
-    await refresh();
-    if (!routedOnce) {
-      routedOnce = true;
-      await routeFromUrl();
+    try {
+      await refresh();
+      if (!routedOnce) {
+        routedOnce = true;
+        await routeFromUrl();
+      }
+    } finally {
+      booting = false;
     }
     try {
       const health = await getHealth();
@@ -768,7 +774,13 @@
             if (token) history.replaceState(null, "", location.pathname + location.search);
             return status.authenticated;
           },
-          loadAuthenticatedUi,
+          async () => {
+            // Drop the auth screen now; the session list and the URL's session
+            // (which may start a Pi process) load behind their own spinners.
+            void loadAuthenticatedUi().catch((e) => {
+              err = e instanceof Error ? e.message : String(e);
+            });
+          },
         );
         authRequired = !authenticated;
         if (!authenticated) listReady = true;
@@ -903,6 +915,15 @@
         </button>
       </div>
     {/if}
+    {#if booting && !selected && pathSessionId()}
+      <div class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+        <span
+          class="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+          aria-hidden="true"
+        ></span>
+        Opening session…
+      </div>
+    {:else}
     <ChatPanel
       session={selected}
       {defaultCwd}
@@ -918,6 +939,7 @@
       onExpandSidebar={() => setSidebarOpen(true)}
       onExpandGit={() => setGitSidebarOpen(true)}
     />
+    {/if}
   </div>
   {#if gitSidebarOpen}
     <button

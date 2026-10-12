@@ -387,8 +387,9 @@ export class SessionHub {
     const hit = this.#findOpen(ref);
     if (hit) return hit;
 
-    const disk = await this.listDisk();
-    const info = disk.find((i) => i.id === ref || i.path === ref);
+    const find = (/** @type {any[]} */ rows) => rows.find((i) => i.id === ref || i.path === ref);
+    // The cached scan can predate a just-created session; rescan before giving up.
+    const info = find(await this.listDisk()) ?? find(await this.listDisk(undefined, { fresh: true }));
     if (!info?.path) {
       const err = new Error(`Session not open: ${ref}`);
       // @ts-expect-error
@@ -549,10 +550,36 @@ export class SessionHub {
     return this._warmReg;
   }
 
-  /** @param {string} [cwd] */
-  async listDisk(cwd) {
-    if (cwd) return SessionManager.list(cwd);
-    return SessionManager.listAll();
+  /** @type {Map<string, { rows?: any[]; inflight?: Promise<any[]>; scannedAt?: number }>} */
+  #diskCache = new Map();
+
+  /**
+   * Pi reads every session file to list them (seconds with large histories),
+   * so serve the last scan immediately and refresh it in the background.
+   * @param {string} [cwd]
+   * @param {{ fresh?: boolean }} [opts] wait for a new scan instead of the cached one
+   */
+  async listDisk(cwd, opts = {}) {
+    const key = cwd ?? "";
+    let entry = this.#diskCache.get(key);
+    if (!entry) this.#diskCache.set(key, (entry = {}));
+    const cached = entry;
+    // Frequent list polls shouldn't each trigger a full disk scan.
+    const recent = cached.scannedAt !== undefined && Date.now() - cached.scannedAt < 10_000;
+    if (cached.rows && recent && !opts.fresh) return cached.rows;
+    if (!cached.inflight) {
+      cached.inflight = (cwd ? SessionManager.list(cwd) : SessionManager.listAll())
+        .then((rows) => {
+          cached.scannedAt = Date.now();
+          return (cached.rows = rows);
+        })
+        .finally(() => (cached.inflight = undefined));
+    }
+    if (cached.rows && !opts.fresh) {
+      cached.inflight.catch(() => {}); // background refresh; next call sees it
+      return cached.rows;
+    }
+    return cached.inflight;
   }
 
   listOpen() {
