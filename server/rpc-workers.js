@@ -76,7 +76,7 @@ function busyState(state, bashRunning = false) {
 /** One isolated `pi --mode rpc` child per browser-owned session. */
 export class RpcWorkerManager {
   /**
-   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string; shutdownTimeoutMs?: number; maxFrameBytes?: number; guardOptions?: { now?: () => number; recentWriteMs?: number } }} [options]
+   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string; shutdownTimeoutMs?: number; maxFrameBytes?: number; guardOptions?: { now?: () => number; recentWriteMs?: number }; onTurnEnd?: (turn: { id: string; name?: string; startedAt?: number; message?: unknown }) => void }} [options]
    */
   constructor(options = {}) {
     this.lockDir = options.lockDir ?? path.join(getAgentDir(), "remote", "locks");
@@ -88,6 +88,7 @@ export class RpcWorkerManager {
       ? [process.execPath, options.rpcEntry]
       : resolvePiCommand({ ...process.env, ...this.env });
     this.spawnProcess = options.spawnProcess ?? spawn;
+    this.onTurnEnd = options.onTurnEnd;
     this.sessionDir = options.sessionDir;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
@@ -549,15 +550,30 @@ export class RpcWorkerManager {
 
   #project(worker, event) {
     if (!event || typeof event !== "object") return;
-    if (event.type === "agent_start") worker.state.isStreaming = true;
+    if (event.type === "agent_start") {
+      worker.state.isStreaming = true;
+      worker.turnStartedAt ??= Date.now();
+    }
     if (event.type === "agent_settled") {
       worker.state.isStreaming = false;
       void this.#refreshMessages(worker);
+      // Only turns seen starting here notify; a reattach to an idle session stays quiet.
+      if (worker.turnStartedAt) {
+        this.onTurnEnd?.({
+          id: worker.id,
+          name: worker.state.sessionName,
+          startedAt: worker.turnStartedAt,
+          message: worker.lastAssistant,
+        });
+      }
+      worker.turnStartedAt = undefined;
+      worker.lastAssistant = undefined;
     }
     if (event.type === "message_start" || event.type === "message_update") {
       if (event.message?.role === "assistant") worker.streamingMessage = event.message;
     }
     if (event.type === "message_end") {
+      if (event.message?.role === "assistant") worker.lastAssistant = event.message;
       worker.streamingMessage = null;
       void this.#refreshMessages(worker);
     }

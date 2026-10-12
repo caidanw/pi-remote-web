@@ -88,6 +88,31 @@ describe("remote broker", () => {
     );
   });
 
+  it("reports a terminal's finished turn with its last answer", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
+    const socketPath = path.join(dir, "broker.sock");
+    const client = makeClient(socketPath, "terminal");
+    const turns = [];
+    const broker = new RemoteBroker({ socketPath, onTurnEnd: (turn) => turns.push(turn) });
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => broker.close());
+    cleanup.push(async () => client.stop());
+
+    await broker.listen();
+    client.start();
+    await waitFor(() => broker.listSessions()[0]?.connected);
+
+    client.publish({ type: "agent_settled" }); // no turn seen: quiet
+    client.publish({ type: "agent_start" });
+    const answer = { role: "assistant", timestamp: 5, stopReason: "stop", content: [{ type: "text", text: "done" }] };
+    client.publish({ type: "message_end", message: answer });
+    client.publish({ type: "agent_settled" });
+    await waitFor(() => turns.length === 1);
+    assert.equal(turns[0].id, "terminal");
+    assert.deepEqual(turns[0].message, answer);
+    assert.equal(typeof turns[0].startedAt, "number");
+  });
+
   it("builds the transcript from streamed messages without full snapshots", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
     const socketPath = path.join(dir, "broker.sock");

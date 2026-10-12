@@ -21,6 +21,8 @@ Pi owns the sessions, models, provider auth, tools, skills, and extensions; Pi R
 2. `pi-remote-web install` installs and starts the LaunchAgent.
 3. `pi-remote-web pair` prints a QR code and a five-minute single-use pairing link. Scan it inside the installed home-screen app (iOS keeps home-screen app cookies separate from Safari).
 
+4. Tap the bell in the sidebar to get a notification whenever a turn finishes (any session, terminal or browser). A "Notifications are on" message confirms it works.
+
 Other commands: `pi-remote-web status | doctor | logs | restart | stop | start | uninstall | revoke-all | help`. `pi-remote-web daemon` runs the server in the foreground.
 
 Terminal sessions appear live once their Pi has the adapter loaded; a terminal started before installing it connects with `/reload`. Sessions owned by an unconnected terminal open as a read-only copy.

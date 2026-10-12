@@ -330,6 +330,25 @@ export function getMessages(id: string, opts?: { limit?: number }) {
   }>(`/api/sessions/${encodeURIComponent(id)}/messages${query}`);
 }
 
+/** Turn-finished push notifications. */
+export function getPushConfig() {
+  return req<{ enabled: boolean; publicKey?: string }>("/api/push");
+}
+
+export function savePushSubscription(subscription: PushSubscriptionJSON) {
+  return req<{ ok: true }>("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify({ subscription }),
+  });
+}
+
+export function deletePushSubscription(endpoint: string) {
+  return req<{ ok: true }>("/api/push/unsubscribe", {
+    method: "POST",
+    body: JSON.stringify({ endpoint }),
+  });
+}
+
 /** Read-only messages straight from a session file another Pi process owns. */
 export function getTranscript(path: string, opts?: { limit?: number }) {
   const limit = opts?.limit ? `&limit=${encodeURIComponent(String(opts.limit))}` : "";

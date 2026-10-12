@@ -5,6 +5,7 @@
   import Separator from "agentic-ui-kit/components/ui/separator.svelte";
   import ThemeToggle from "agentic-ui-kit/components/ui/theme-toggle.svelte";
   import SoundToggle from "$lib/components/SoundToggle.svelte";
+  import NotifyToggle from "$lib/components/NotifyToggle.svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import Folder from "@lucide/svelte/icons/folder";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
@@ -266,6 +267,7 @@
       <div class="min-w-0 whitespace-nowrap text-sm font-semibold tracking-tight">Pi Remote Web</div>
     </div>
     <div class="flex shrink-0 items-center gap-0.5">
+      <NotifyToggle />
       <SoundToggle />
       <ThemeToggle mode="toggle" />
       {#if onCollapse}

@@ -67,8 +67,11 @@ export class RemoteBroker {
     socketPath,
     reconnectGraceMs = DEFAULT_RECONNECT_GRACE_MS,
     requestTakeover,
+    onTurnEnd = undefined,
   }) {
     this.socketPath = socketPath;
+    /** @type {((turn: { id: string; name?: string; startedAt?: number; message?: unknown }) => void) | undefined} */
+    this.onTurnEnd = onTurnEnd;
     this.reconnectGraceMs = reconnectGraceMs;
     this.requestTakeover = requestTakeover;
     this.server = null;
@@ -457,8 +460,27 @@ export class RemoteBroker {
     if (!isRecord(session.snapshot)) session.snapshot = { messages: [] };
     if (!isRecord(session.snapshot.session)) session.snapshot.session = {};
     const meta = session.snapshot.session;
-    if (event.type === "agent_start") meta.streaming = true;
-    if (event.type === "agent_settled") meta.streaming = false;
+    if (event.type === "agent_start") {
+      meta.streaming = true;
+      session.turnStartedAt ??= Date.now();
+    }
+    if (event.type === "message_end" && isRecord(event.message) && event.message.role === "assistant") {
+      session.lastAssistant = event.message;
+    }
+    if (event.type === "agent_settled") {
+      meta.streaming = false;
+      // Only turns seen starting here notify; a reconnecting idle terminal stays quiet.
+      if (session.turnStartedAt) {
+        this.onTurnEnd?.({
+          id: session.runtimeId,
+          name: typeof meta.name === "string" ? meta.name : undefined,
+          startedAt: session.turnStartedAt,
+          message: session.lastAssistant,
+        });
+      }
+      session.turnStartedAt = undefined;
+      session.lastAssistant = undefined;
+    }
     if (event.type === "model_select" && isRecord(event.model)) {
       meta.model = {
         provider: event.model.provider,

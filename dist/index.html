@@ -15,15 +15,18 @@
     <meta name="color-scheme" content="light dark" />
     <title>Pi Remote Web</title>
     <script>
-      // This origin previously hosted another app; drop its service worker and caches.
+      // This origin previously hosted another app: drop its service workers and
+      // caches, keeping only our push-notification worker (/sw.js).
       (function () {
         try {
           if (navigator.serviceWorker) {
             navigator.serviceWorker.getRegistrations().then(function (list) {
               list.forEach(function (registration) {
-                registration.unregister();
+                var worker = registration.active || registration.waiting || registration.installing;
+                if (!worker || new URL(worker.scriptURL).pathname !== "/sw.js") registration.unregister();
               });
             });
+            navigator.serviceWorker.register("/sw.js").catch(function () {});
           }
           if (window.caches) {
             caches.keys().then(function (keys) {
@@ -49,8 +52,8 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-Dl8Ma6Xp.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-3HjO0JSQ.css">
+    <script type="module" crossorigin src="/assets/index-YWjPhtwk.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-D-Y7WtIy.css">
   </head>
   <body class="min-h-svh text-foreground">
     <div id="app"></div>

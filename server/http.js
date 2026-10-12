@@ -493,8 +493,9 @@ function localSource(workers, id) {
  * @param {RpcWorkerManager | undefined} workers
  * @param {WorktreeManager | undefined} worktrees
  * @param {AuthManager | false} auth
+ * @param {import("./push.js").PushNotifier | undefined} [push]
  */
-async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
+async function handleApi(req, res, remoteBroker, workers, worktrees, auth, push) {
   const { pathname, searchParams } = parsePath(req.url || "/");
   const method = req.method || "GET";
 
@@ -821,6 +822,22 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
         remoteBroker,
       );
       return json(res, 200, { sessions });
+    }
+
+    // Turn-finished push notifications (the daemon owns the VAPID keys).
+    if (method === "GET" && pathname === "/api/push") {
+      return json(res, 200, push ? { enabled: true, publicKey: push.publicKey } : { enabled: false });
+    }
+    if (push && method === "POST" && pathname === "/api/push/subscribe") {
+      const body = await readJson(req, AUTH_BODY_MAX);
+      await push.subscribe(body.subscription);
+      void push.send({ title: "Pi", body: "Notifications are on.", url: "/", tag: "pi-remote-web-push-on" });
+      return json(res, 200, { ok: true });
+    }
+    if (push && method === "POST" && pathname === "/api/push/unsubscribe") {
+      const body = await readJson(req, AUTH_BODY_MAX);
+      if (typeof body.endpoint === "string") await push.unsubscribe(body.endpoint);
+      return json(res, 200, { ok: true });
     }
 
     // GET /api/transcript?path= : read-only copy of a session another Pi process owns
@@ -1500,7 +1517,7 @@ async function handleStatic(req, res) {
 }
 
 /**
- * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker; workers?: RpcWorkerManager; worktrees?: WorktreeManager; auth: AuthManager | false; bodyIdleTimeoutMs?: number; requestTimeoutMs?: number; headersTimeoutMs?: number; socketTimeoutMs?: number }} opts
+ * @param {{ port?: number; stayAlive?: boolean; remoteBroker?: RemoteBroker; workers?: RpcWorkerManager; worktrees?: WorktreeManager; push?: import("./push.js").PushNotifier; auth: AuthManager | false; bodyIdleTimeoutMs?: number; requestTimeoutMs?: number; headersTimeoutMs?: number; socketTimeoutMs?: number }} opts
  * stayAlive: in-process /remote-web — close server without process.exit
  */
 export function createServer(opts = {}) {
@@ -1512,6 +1529,7 @@ export function createServer(opts = {}) {
   const remoteBroker = opts.remoteBroker;
   const workers = opts.workers;
   const worktrees = opts.worktrees;
+  const push = opts.push;
   const auth = opts.auth;
   const bodyIdleTimeoutMs = opts.bodyIdleTimeoutMs ?? DEFAULT_BODY_IDLE_TIMEOUT_MS;
   hostCtl.stayAlive = stayAlive;
@@ -1522,7 +1540,7 @@ export function createServer(opts = {}) {
     Promise.resolve()
       .then(async () => {
         if ((req.url || "").startsWith("/api")) {
-          await handleApi(req, res, remoteBroker, workers, worktrees, auth);
+          await handleApi(req, res, remoteBroker, workers, worktrees, auth, push);
         } else {
           if (auth) auth.validateHostOrigin(req);
           await handleStatic(req, res);

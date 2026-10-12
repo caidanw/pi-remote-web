@@ -13,6 +13,7 @@ import { RpcWorkerManager } from "./rpc-workers.js";
 import { WorktreeManager } from "./worktrees.js";
 import { AuthManager, authDisabledByEnv } from "./auth.js";
 import { encodeQr, renderQr } from "./qr.js";
+import { PushNotifier, turnNotification } from "./push.js";
 import {
   controlService,
   detectPublicUrl,
@@ -115,12 +116,19 @@ if (insecure) {
 const socketPath =
   process.env.PI_REMOTE_WEB_SOCKET ??
   join(getAgentDir(), "remote", "pi-remote-web.sock");
-const workers = new RpcWorkerManager();
+// Apple rejects VAPID subjects it can't reach; prefer the public HTTPS origin.
+const push = await new PushNotifier({
+  file: join(auth.configDir, "push.json"),
+  subject: auth.publicUrl?.origin ?? "mailto:pi-remote-web@users.noreply.github.com",
+}).init();
+const onTurnEnd = (turn) => void push.send(turnNotification(turn));
+const workers = new RpcWorkerManager({ onTurnEnd });
 console.log(`[pi-remote-web] workers run ${workers.command.join(" ")}`);
 const worktrees = new WorktreeManager();
 const broker = new RemoteBroker({
   socketPath,
   requestTakeover: (sessionPath) => workers.takeover(sessionPath),
+  onTurnEnd,
 });
 await broker.listen();
 console.log(`[pi-remote-web] remote broker ${socketPath}`);
@@ -130,6 +138,7 @@ const app = createServer({
   remoteBroker: broker,
   workers,
   worktrees,
+  push,
   auth: insecure ? false : auth,
 });
 app.listen();

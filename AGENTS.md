@@ -29,6 +29,9 @@ the server, and the prebuilt UI in `dist/`.
 - **Ownership**: one owner per session file via locks (`remote/session-lock.js`).
   A session owned elsewhere opens as a read-only copy read from disk
   (`server/transcript.js`).
+- **Notifications**: on `agent_settled` the broker and workers report the turn to
+  `server/push.js`, which sends Web Push (RFC 8291 encryption, VAPID keys in the
+  auth dir) to subscribed browsers; `web/public/sw.js` only displays them.
 - **In-process mode**: `/remote-web` inside Pi (`extensions/web.ts`) runs the hub
   (`server/hub.js`) in that Pi process.
 

@@ -375,6 +375,19 @@ describe("browser-owned Pi RPC workers", () => {
     assert.equal(entries.at(-1).name, "disposed");
   });
 
+  it("reports finished turns once, and stays quiet for a settle with no turn", async () => {
+    const turns = [];
+    const { root, manager } = await fixture({ onTurnEnd: (turn) => turns.push(turn) });
+    const row = await manager.open({ cwd: root, fresh: true });
+    await manager.abort(row.id); // agent_settled without agent_start
+    await manager.prompt(row.id, "hello");
+    await waitFor(() => turns.length === 1);
+    assert.equal(turns[0].id, row.id);
+    assert.equal(typeof turns[0].startedAt, "number");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(turns.length, 1);
+  });
+
   it("closes worker pipes cleanly and leaves a resumable valid JSONL", async () => {
     const { root, manager } = await fixture();
     const row = await manager.open({ cwd: root, fresh: true });
