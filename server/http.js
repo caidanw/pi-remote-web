@@ -844,8 +844,13 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth, push)
 
     // GET /api/transcript?path= : read-only copy of a session another Pi process owns
     if (method === "GET" && pathname === "/api/transcript") {
-      const transcript = await readTranscript(searchParams.get("path") || "");
-      return json(res, 200, messagePage(transcript.messages, searchParams));
+      const transcript = await readTranscript(
+        searchParams.get("path") || "",
+        undefined,
+        searchParams.get("since") || undefined,
+      );
+      if (transcript.unchanged) return json(res, 200, { unchanged: true, version: transcript.version });
+      return json(res, 200, { ...messagePage(transcript.messages, searchParams), version: transcript.version });
     }
 
     // POST /api/sessions  { path?, cwd?, fresh?, content?, filename? }

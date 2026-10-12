@@ -350,10 +350,11 @@ export function deletePushSubscription(endpoint: string) {
 }
 
 /** Read-only messages straight from a session file another Pi process owns. */
-export function getTranscript(path: string, opts?: { limit?: number }) {
+export function getTranscript(path: string, opts?: { limit?: number; since?: string }) {
   const limit = opts?.limit ? `&limit=${encodeURIComponent(String(opts.limit))}` : "";
-  return req<{ messages: ChatMessage[]; hasMore?: boolean }>(
-    `/api/transcript?path=${encodeURIComponent(path)}${limit}`,
+  const since = opts?.since ? `&since=${encodeURIComponent(opts.since)}` : "";
+  return req<{ messages?: ChatMessage[]; hasMore?: boolean; unchanged?: boolean; version: string }>(
+    `/api/transcript?path=${encodeURIComponent(path)}${limit}${since}`,
   );
 }
 

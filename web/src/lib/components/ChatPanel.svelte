@@ -394,12 +394,14 @@
     const path = readOnlyPath;
     if (!path) return;
     let current = true;
+    let version = "";
     loadingTranscript = true;
     error = null;
     getTranscript(path, { limit: FETCH_WINDOW })
       .then((page) => {
         if (!current) return;
-        messages = page.messages;
+        version = page.version;
+        messages = page.messages ?? [];
         void scrollBottom();
       })
       .catch((e) => {
@@ -408,8 +410,22 @@
       .finally(() => {
         if (current) loadingTranscript = false;
       });
+    // The terminal keeps writing; follow the file (a stat when unchanged).
+    const timer = setInterval(() => {
+      if (!version || document.visibilityState !== "visible") return;
+      void getTranscript(path, { limit: FETCH_WINDOW, since: version })
+        .then((page) => {
+          if (!current || page.unchanged) return;
+          version = page.version;
+          const follow = stickBottom;
+          messages = page.messages ?? [];
+          if (follow) void scrollBottom();
+        })
+        .catch(() => {});
+    }, 4000);
     return () => {
       current = false;
+      clearInterval(timer);
     };
   });
   /** Prefer local (live) model; fall back to session prop so picker never blanks. */
