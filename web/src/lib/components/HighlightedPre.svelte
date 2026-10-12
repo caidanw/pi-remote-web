@@ -1,5 +1,6 @@
 <script lang="ts">
   import { mdHighlighter } from "agentic-ui-kit/components/prompt-kit/md-highlighter";
+  import { highlightState } from "agentic-ui-kit/components/prompt-kit/highlight-ready.svelte";
 
   type Props = {
     text: string;
@@ -8,7 +9,7 @@
   };
 
   let { text, lang, class: className = "" }: Props = $props();
-  const html = $derived(mdHighlighter.highlight(text, lang));
+  const html = $derived((void highlightState.ready, mdHighlighter.highlight(text, lang)));
 </script>
 
 <div class="highlighted-pre {className}">{@html html}</div>

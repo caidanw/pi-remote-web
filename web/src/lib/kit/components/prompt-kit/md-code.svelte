@@ -11,6 +11,7 @@
 		type ShikiHighlighter,
 	} from "@humanspeak/svelte-markdown/extensions/shiki";
 	import Copy from "@lucide/svelte/icons/copy";
+	import { highlightState } from "./highlight-ready.svelte.js";
 	import Check from "@lucide/svelte/icons/check";
 
 	type Props = {
@@ -24,8 +25,9 @@
 	const contextHl = getContext<ShikiHighlighter | undefined>(SHIKI_CONTEXT_KEY);
 	const resolved = $derived(highlighter ?? contextHl ?? getShikiHighlighter());
 
+	// highlightState.ready re-runs this once grammars finish loading.
 	const html = $derived(
-		resolved
+		resolved && (void highlightState.ready, true)
 			? resolved.highlight(text, lang)
 			: `<pre class="shiki-fallback"><code>${escapeHtml(text)}</code></pre>`,
 	);

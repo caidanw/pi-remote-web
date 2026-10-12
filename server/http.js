@@ -5,6 +5,8 @@
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
 import { createReadStream, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1459,15 +1461,67 @@ async function resolveStatic(pathname) {
   }
 }
 
+const COMPRESSIBLE = new Set([".js", ".css", ".html", ".json", ".svg", ".webmanifest", ".txt", ".map"]);
+const brotli = promisify(zlib.brotliCompress);
+const gzip = promisify(zlib.gzip);
+/** Compressed static bodies, recomputed when the file changes (dist is small and fixed). */
+/** @type {Map<string, { mtimeMs: number; body: Buffer }>} */
+const compressedCache = new Map();
+
 /**
- * Stream a verified file. Headers only after open — no 200-then-fail races.
+ * Best encoding the client accepts (q=0 means refused).
+ * @param {string | string[] | undefined} header
+ */
+export function pickEncoding(header) {
+  const accepted = new Set();
+  for (const part of String(header || "").toLowerCase().split(",")) {
+    const [name, ...params] = part.split(";").map((bit) => bit.trim());
+    const q = params.find((param) => param.startsWith("q="));
+    if (name && !(q && Number(q.slice(2)) === 0)) accepted.add(name);
+  }
+  return accepted.has("br") ? "br" : accepted.has("gzip") ? "gzip" : null;
+}
+
+/**
+ * @param {string} filePath
+ * @param {"br" | "gzip"} encoding
+ */
+async function compressedBody(filePath, encoding) {
+  const { mtimeMs } = await stat(filePath);
+  const key = `${filePath}|${encoding}`;
+  const hit = compressedCache.get(key);
+  if (hit?.mtimeMs === mtimeMs) return hit.body;
+  const raw = await readFile(filePath);
+  // Brotli 9: ~6x smaller JS in tens of ms; 11 is barely smaller and ~30x slower.
+  const body =
+    encoding === "br"
+      ? await brotli(raw, {
+          params: {
+            [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length,
+          },
+        })
+      : await gzip(raw, { level: 9 });
+  compressedCache.set(key, { mtimeMs, body });
+  return body;
+}
+
+/**
+ * Send a verified file. Hashed /assets/ files are immutable; everything else
+ * (index.html, sw.js, manifest) revalidates so updates land on next open.
+ * Text is Brotli/gzip-compressed for the phone's trip over Tailscale.
+ * @param {http.IncomingMessage} req
  * @param {http.ServerResponse} res
  * @param {string} filePath
+ * @param {boolean} immutable
  */
-function sendFile(res, filePath) {
+function sendFile(req, res, filePath, immutable) {
   const ext = path.extname(filePath);
-  const type = MIME[ext] || "application/octet-stream";
-  const stream = createReadStream(filePath);
+  const headers = {
+    "Content-Type": MIME[ext] || "application/octet-stream",
+    "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
+    ...(COMPRESSIBLE.has(ext) ? { Vary: "Accept-Encoding" } : {}),
+  };
 
   const fail = (err) => {
     if (err) console.error("[pi-remote-web] static", filePath, err.message || err);
@@ -1475,6 +1529,17 @@ function sendFile(res, filePath) {
     else if (!res.writableEnded) res.end();
   };
 
+  const encoding = COMPRESSIBLE.has(ext) ? pickEncoding(req.headers["accept-encoding"]) : null;
+  if (encoding) {
+    compressedBody(filePath, encoding).then((body) => {
+      if (res.writableEnded) return;
+      res.writeHead(200, { ...headers, "Content-Encoding": encoding, "Content-Length": body.length });
+      res.end(body);
+    }, fail);
+    return;
+  }
+
+  const stream = createReadStream(filePath);
   stream.on("error", fail);
   stream.on("open", () => {
     if (res.writableEnded) {
@@ -1482,7 +1547,7 @@ function sendFile(res, filePath) {
       return;
     }
     if (!res.headersSent) {
-      res.writeHead(200, { "Content-Type": type });
+      res.writeHead(200, headers);
     }
     stream.pipe(res);
   });
@@ -1513,7 +1578,8 @@ async function handleStatic(req, res) {
   if (resolved.status !== 200 || !resolved.filePath) {
     return text(res, 404, "not found");
   }
-  sendFile(res, resolved.filePath);
+  const assetsDir = path.join(path.resolve(WEB_DIST), "assets") + path.sep;
+  sendFile(req, res, resolved.filePath, resolved.filePath.startsWith(assetsDir));
 }
 
 /**

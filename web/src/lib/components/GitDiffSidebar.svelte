@@ -10,6 +10,7 @@
     highlightInline,
     langFromPath,
   } from "agentic-ui-kit/components/prompt-kit/md-highlighter";
+  import { highlightState } from "agentic-ui-kit/components/prompt-kit/highlight-ready.svelte";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import PanelRightClose from "@lucide/svelte/icons/panel-right-close";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
@@ -213,7 +214,8 @@
   }
 
   const codeLang = $derived(selectedPath ? langFromPath(selectedPath) : "");
-  const diffRows = $derived(patch ? parseUnifiedDiff(patch, codeLang) : []);
+  // Re-highlight once grammars finish loading in the background.
+  const diffRows = $derived((void highlightState.ready, patch ? parseUnifiedDiff(patch, codeLang) : []));
 
   function onResizePointerDown(e: PointerEvent) {
     e.preventDefault();

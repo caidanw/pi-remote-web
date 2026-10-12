@@ -1,6 +1,7 @@
 /**
  * Sync Shiki highlighter for chat markdown (dual light/dark themes).
- * Languages are explicit imports so unused ones stay tree-shaken.
+ * Grammars load in the background (md-langs.ts); until then code renders
+ * plain and consumers re-highlight via highlight-ready.svelte.ts.
  */
 import {
 	escapeHtml,
@@ -9,56 +10,41 @@ import {
 import { createHighlighterCoreSync } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
-import bash from "shiki/langs/bash.mjs";
-import css from "shiki/langs/css.mjs";
-import diff from "shiki/langs/diff.mjs";
-import go from "shiki/langs/go.mjs";
-import html from "shiki/langs/html.mjs";
-import java from "shiki/langs/java.mjs";
-import javascript from "shiki/langs/javascript.mjs";
-import json from "shiki/langs/json.mjs";
-import jsx from "shiki/langs/jsx.mjs";
-import markdown from "shiki/langs/markdown.mjs";
-import python from "shiki/langs/python.mjs";
-import rust from "shiki/langs/rust.mjs";
-import shellscript from "shiki/langs/shellscript.mjs";
-import sql from "shiki/langs/sql.mjs";
-import svelte from "shiki/langs/svelte.mjs";
-import toml from "shiki/langs/toml.mjs";
-import tsx from "shiki/langs/tsx.mjs";
-import typescript from "shiki/langs/typescript.mjs";
-import yaml from "shiki/langs/yaml.mjs";
 
 import githubDark from "shiki/themes/github-dark.mjs";
 import githubLight from "shiki/themes/github-light.mjs";
 
 const core = createHighlighterCoreSync({
 	engine: createJavaScriptRegexEngine(),
-	langs: [
-		bash,
-		css,
-		diff,
-		go,
-		html,
-		java,
-		javascript,
-		json,
-		jsx,
-		markdown,
-		python,
-		rust,
-		shellscript,
-		sql,
-		svelte,
-		toml,
-		tsx,
-		typescript,
-		yaml,
-	],
+	langs: [],
 	themes: [githubLight, githubDark],
 });
 
-const loadedLangs = new Set(core.getLoadedLanguages());
+const loadedLangs = new Set<string>();
+let ready = false;
+const readyListeners = new Set<() => void>();
+
+/** Starts at import time so grammars download alongside app startup, not before it. */
+export const highlighterReady: Promise<void> = import("./md-langs.js")
+	.then(({ langs }) => {
+		core.loadLanguageSync(...langs);
+		for (const lang of core.getLoadedLanguages()) loadedLangs.add(lang);
+		ready = true;
+		for (const listener of readyListeners) listener();
+		readyListeners.clear();
+	})
+	.catch(() => {
+		/* stay on plain-text fallback */
+	});
+
+export const isHighlighterReady = () => ready;
+
+/** Call `listener` once grammars are loaded; returns an unsubscribe. */
+export function whenHighlighterReady(listener: () => void): () => void {
+	if (ready) return () => {};
+	readyListeners.add(listener);
+	return () => readyListeners.delete(listener);
+}
 
 function fallback(code: string, lang: string): string {
 	const langAttr = lang ? ` data-lang="${escapeHtml(lang)}"` : "";
@@ -139,6 +125,6 @@ export function langFromPath(path: string): string {
 		diff: "diff",
 		patch: "diff",
 	};
-	const lang = map[ext] ?? "";
-	return lang && loadedLangs.has(lang) ? lang : "";
+	// highlight() falls back to plain text until grammars load.
+	return map[ext] ?? "";
 }
