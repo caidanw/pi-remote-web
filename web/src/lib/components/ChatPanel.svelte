@@ -40,9 +40,11 @@
     type StreamEffect,
   } from "$lib/chat-stream";
   import { BUILTIN_SLASH_COMMANDS } from "$lib/slash-builtins";
+  import { liveActivity } from "$lib/tool-presentation";
   import { skillNameForSlashCommand } from "$lib/special-message";
   import {
     formatWorkDuration,
+    groupExploration,
     hasAssistantWork,
     isComposerCommand,
     isFinalAssistantResponse,
@@ -1679,6 +1681,7 @@
         userItems,
         directItems,
         workItems,
+        workEntries: groupExploration(workItems),
         finalItem,
         completed: !active,
         liveSince,
@@ -1686,6 +1689,9 @@
       };
     });
   });
+
+  /** What the agent is doing right now, for the bottom status line. */
+  const liveStep = $derived(busy ? liveActivity(messages) : "");
 
   const promptBoxClass = $derived(
     `border-black/[0.08] bg-white shadow-sm dark:border-white/10 dark:bg-zinc-900 ${
@@ -1940,7 +1946,7 @@
                     />
                   </summary>
                   <div class="mt-2 flex min-w-0 flex-col gap-3">
-                    {#each turn.workItems as { m, i } (messageKey(m, i))}
+                    {#snippet workItem(m: ChatMsg, i: number)}
                       {#if !(m.role === "toolResult" && isPairedToolResult(messages, i))}
                         {@const isLiveAssistant =
                           busy &&
@@ -1955,6 +1961,26 @@
                           streaming={isLiveAssistant}
                           assistantMode={i === turn.finalItem?.i ? "work-only" : "all"}
                         />
+                      {/if}
+                    {/snippet}
+                    {#each turn.workEntries as entry (entry.kind === "item" ? messageKey(entry.item.m, entry.item.i) : `explore-${messageKey(entry.items[0]!.m, entry.items[0]!.i)}`)}
+                      {#if entry.kind === "explore"}
+                        <!-- Runs of reads/searches fold into one row; expand to see each step. -->
+                        <details class="group/explore min-w-0">
+                          <summary
+                            class="flex w-fit cursor-pointer list-none items-center gap-1.5 text-[12px] text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden"
+                          >
+                            <span>{entry.label}</span>
+                            <span class="transition-transform group-open/explore:rotate-90" aria-hidden="true">▸</span>
+                          </summary>
+                          <div class="mt-2 flex min-w-0 flex-col gap-3 border-l-2 border-border/70 pl-3">
+                            {#each entry.items as { m, i } (messageKey(m, i))}
+                              {@render workItem(m, i)}
+                            {/each}
+                          </div>
+                        </details>
+                      {:else}
+                        {@render workItem(entry.item.m, entry.item.i)}
                       {/if}
                     {/each}
                   </div>
@@ -2010,7 +2036,7 @@
                 class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
                 aria-hidden="true"
               ></span>
-              <span>Working…</span>
+              <span class="min-w-0 truncate">{liveStep || "Working…"}</span>
               {#if lastPromptAt > 0}
                 <span class="tabular-nums">{(void workTick, formatWorkDuration(Date.now() - lastPromptAt))}</span>
               {/if}

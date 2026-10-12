@@ -3,11 +3,49 @@ import assert from "node:assert/strict";
 import {
   bashOutputPresentation,
   builtinToolPresentation,
+  diffCounts,
   genericToolTitle,
+  liveActivity,
   nestedCallSummary,
   toolDuration,
   toolStartedAt,
 } from "./tool-presentation.ts";
+
+describe("diff counts and live activity", () => {
+  it("counts pi and unified diff lines, ignoring file headers", () => {
+    assert.equal(diffCounts("  22 \n- 23 old\n+ 23 new\n+ 24 more"), "+2 \u22121");
+    assert.equal(diffCounts("--- a.ts\n+++ a.ts\n@@\n+x"), "+1");
+    assert.equal(diffCounts(""), "");
+  });
+
+  it("shows edit counts with duration, and write line counts", () => {
+    const edit = builtinToolPresentation(
+      { type: "toolCall", name: "edit", arguments: { path: "a.ts", oldText: "a", newText: "b\nc" } },
+      { role: "toolResult", durationMs: 200, details: { diff: "- 1 a\n+ 1 b\n+ 2 c" } },
+      "",
+    );
+    assert.equal(edit?.meta, "+2 \u22121 \u00b7 0.2s");
+    const write = builtinToolPresentation(
+      { type: "toolCall", name: "write", arguments: { path: "b.ts", content: "1\n2\n3" } },
+      undefined,
+      "",
+    );
+    assert.equal(write?.meta, "+3");
+  });
+
+  it("names the step in progress", () => {
+    const call = { type: "toolCall", id: "t1", name: "bash", arguments: { command: "npm test" } };
+    const user = { role: "user", content: "go" };
+    assert.equal(liveActivity([user, { role: "assistant", content: [call] }]), "$ npm test");
+    assert.equal(
+      liveActivity([user, { role: "assistant", content: [call] }, { role: "toolResult", toolCallId: "t1" }]),
+      "",
+    );
+    assert.equal(liveActivity([user, { role: "assistant", content: [{ type: "thinking", thinking: "hm" }] }]), "Thinking");
+    assert.equal(liveActivity([user, { role: "assistant", content: [{ type: "text", text: "Here" }] }]), "Writing");
+    assert.equal(liveActivity([user]), "");
+  });
+});
 
 describe("tool timing and nested calls", () => {
   it("formats durations and summarizes codemode inner calls", () => {

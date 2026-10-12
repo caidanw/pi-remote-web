@@ -9,6 +9,7 @@
     toolResultText,
   } from "$lib/api";
   import { findMessagePlugin } from "$lib/plugins/registry";
+  import { hasAssistantText } from "$lib/work-section";
   import {
     formatTokenCount,
     parseSkillCommand,
@@ -103,9 +104,8 @@
       ? message.thinking.trim()
       : "",
   );
-  const showAssistantCopy = $derived(
-    isAssistant && assistantMode !== "work-only" && Boolean(text.trim()),
-  );
+  // Copy belongs on the answer, not on every work step (tool args count as `text`).
+  const showAssistantCopy = $derived(assistantMode === "final-only" && hasAssistantText(message));
   const lastToolIdx = $derived.by(() => {
     let idx = -1;
     for (let i = 0; i < parts.length; i++) {

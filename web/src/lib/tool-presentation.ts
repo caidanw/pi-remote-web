@@ -1,4 +1,5 @@
 import type { ChatMessage, ContentPart } from "./api.ts";
+import { findToolResultForCall, getParts } from "./api.ts";
 import { formatWorkDuration, messageTimestamp } from "./work-section.ts";
 
 type JsonObject = Record<string, unknown>;
@@ -69,6 +70,48 @@ export function toolDuration(result: ChatMessage | undefined): string {
   const ms = result?.durationMs;
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
   return ms < 1000 ? `${(ms / 1000).toFixed(1)}s` : formatWorkDuration(ms);
+}
+
+/** "+12 \u221213" for a diff (pi's `+ 12 text` lines or unified `+text`); "" when unchanged. */
+export function diffCounts(diff: string): string {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return [added && `+${added}`, removed && `\u2212${removed}`].filter(Boolean).join(" ");
+}
+
+const join = (...bits: (string | undefined)[]) => bits.filter(Boolean).join(" \u00b7 ") || undefined;
+
+/**
+ * What the agent is doing right now, from the newest assistant message:
+ * the title of an unfinished tool call, "Thinking", or "Writing"; "" between steps.
+ */
+export function liveActivity(messages: ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.role === "user") return "";
+    if (message.role !== "assistant") continue;
+    const parts = getParts(message);
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const part = parts[j]!;
+      if (part.type === "toolCall" || part.type === "tool_use") {
+        const id = typeof part.id === "string" ? part.id : "";
+        if (id && findToolResultForCall(messages, i, id)) return "";
+        return (
+          builtinToolPresentation(part, undefined, "")?.title ??
+          genericToolTitle(part.name ?? "tool", part.arguments ?? part.input)
+        );
+      }
+      if (part.type === "thinking" || part.type === "reasoning") return "Thinking";
+      if (typeof part.text === "string" && part.text.trim()) return "Writing";
+    }
+    return "";
+  }
+  return "";
 }
 
 /** When an assistant message's tool calls began: once the model finished streaming it. */
@@ -168,6 +211,7 @@ export function builtinToolPresentation(
     return {
       title: readTitle(path, args),
       path,
+      meta: join(toolDuration(pairedResult)),
       args: "",
       argsLabel: "args",
       result: resultText,
@@ -181,6 +225,7 @@ export function builtinToolPresentation(
     return {
       title: `write ${path}`,
       path,
+      meta: join(content ? `+${content.split("\n").length}` : undefined, toolDuration(pairedResult)),
       args: content,
       argsLabel: "content",
       argsKind: "code",
@@ -196,6 +241,7 @@ export function builtinToolPresentation(
   return {
     title: `edit ${path}`,
     path,
+    meta: join(diff ? diffCounts(diff) : undefined, toolDuration(pairedResult)),
     args: "",
     argsLabel: "args",
     result: diff || resultText,
