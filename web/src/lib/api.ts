@@ -989,7 +989,9 @@ export function messageKey(msg: ChatMessage, index: number): string {
   if (typeof msg.id === "string" && msg.id) return msg.id;
   const ts = msg.timestamp != null ? String(msg.timestamp) : "";
   const peek = messageText(msg).slice(0, 48);
-  return `${index}:${msg.role}:${ts}:${peek}`;
+  // Timestamped messages keep their key when older history is prepended (index
+  // shifts); only untimed ones need the index. Collisions: see uniqueMessageKeys.
+  return ts ? `${msg.role}:${ts}:${peek}` : `${index}:${msg.role}::${peek}`;
 }
 
 export function clientMessageKey(): string {

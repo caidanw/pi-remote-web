@@ -45,6 +45,9 @@
   import {
     formatWorkDuration,
     groupExploration,
+    turnStartAtOrBefore,
+    uniqueMessageKeys,
+    wholeTurnStart,
     hasAssistantWork,
     isComposerCommand,
     isFinalAssistantResponse,
@@ -224,7 +227,7 @@
   /** Transcript fetched up front; older messages page in on demand. */
   const FETCH_WINDOW = 120;
   const FETCH_PAGE = 200;
-  /** Messages revealed per scroll-to-top, so history unrolls gradually. */
+  /** Messages revealed per pull, rounded back to the start of a whole turn. */
   const REVEAL_STEP = 10;
   let fetchLimit = $state(FETCH_WINDOW);
   let hasOlderHistory = $state(false);
@@ -430,10 +433,21 @@
   });
   /** Prefer local (live) model; fall back to session prop so picker never blanks. */
   const activeModel = $derived(model ?? session?.model);
-  // Absolute indexes, so a fetch that prepends older messages never shifts what's on screen.
-  const hiddenMsgCount = $derived(
-    visibleStart < 0 ? 0 : Math.min(messages.length, Math.max(0, visibleStart - pageStart)),
+  /**
+   * Absolute index of the first rendered message: whole turns only (see
+   * wholeTurnStart), so loading history adds turns above instead of reshaping
+   * the one at the top.
+   */
+  const visibleFrom = $derived(
+    visibleStart >= 0 && visibleStart >= pageStart
+      ? visibleStart
+      : hasOlderHistory
+        ? wholeTurnStart(messages, pageStart, pageStart)
+        : pageStart,
   );
+  const hiddenMsgCount = $derived(Math.min(messages.length, Math.max(0, visibleFrom - pageStart)));
+  /** Keys that survive prepended history, for {#each}, anchors, and section state. */
+  const keys = $derived(uniqueMessageKeys(messages));
 
   function onComposerDragOver(e: DragEvent) {
     if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
@@ -482,6 +496,19 @@
     pullDistance = scroller.scrollTop <= 0 && dy > 0 ? Math.min(dy * 0.5, PULL_TRIGGER * 1.6) : 0;
   }
 
+  // Non-passive so a pull can cancel the browser's own scroll gesture: otherwise
+  // its leftover momentum scrolls the view right after loading repositions it.
+  $effect(() => {
+    const el = scroller;
+    if (!el) return;
+    const move = (event: TouchEvent) => {
+      onPullMove(event);
+      if (pullDistance > 0 && event.cancelable) event.preventDefault();
+    };
+    el.addEventListener("touchmove", move, { passive: false });
+    return () => el.removeEventListener("touchmove", move);
+  });
+
   function onPullEnd() {
     if (pullDistance >= PULL_TRIGGER) {
       pullLoading = true;
@@ -498,13 +525,9 @@
    */
   async function loadOlder() {
     const id = wiredId;
-    if (!id || loadingOlder) return;
-    if (hiddenMsgCount === 0 && !hasOlderHistory) return;
+    if (!id || loadingOlder || !canLoadOlder) return;
     loadingOlder = true;
-    const startHeight = scroller?.scrollHeight ?? 0;
-    // Pin the first message on screen by a stable role:timestamp key (elements
-    // remount when a fetch shifts indexes, and a turn's first message changes as
-    // older ones join it) and put it back at the same offset afterwards.
+    // Pin the first message on screen and put it back at the same offset afterwards.
     const top = scroller?.getBoundingClientRect().top ?? 0;
     const visible = (el: HTMLElement) => {
       const rect = el.getBoundingClientRect();
@@ -519,20 +542,26 @@
     const anchorOffset = anchor ? withinList(anchor) : 0;
     const startTop = scroller?.scrollTop ?? 0;
     try {
-      // Revealed messages can land inside a collapsed work section and add no
-      // height; keep stepping until something visible appears (bounded).
-      for (let step = 0; step < 30; step++) {
-        if (hiddenMsgCount === 0) {
-          if (!hasOlderHistory || wiredId !== id) break;
-          // Pin the current top first so the fetched page arrives hidden.
-          visibleStart = pageStart;
-          fetchLimit += FETCH_PAGE;
-          await load(id, { force: true, quiet: true });
+      // Reveal back to the start of the turn holding (top - REVEAL_STEP),
+      // fetching older pages until that turn's start is loaded.
+      let target = visibleFrom - REVEAL_STEP;
+      for (let page = 0; page < 10; page++) {
+        const start = turnStartAtOrBefore(messages, pageStart, target);
+        if (start !== null) {
+          target = start;
+          break;
         }
-        visibleStart = Math.max(pageStart, visibleStart - REVEAL_STEP);
-        await tick();
-        if (!scroller || scroller.scrollHeight > startHeight) break;
+        if (!hasOlderHistory || wiredId !== id) {
+          target = pageStart;
+          break;
+        }
+        // Pin what's on screen so the fetched page arrives hidden.
+        visibleStart = visibleFrom;
+        fetchLimit += FETCH_PAGE;
+        await load(id, { force: true, quiet: true });
       }
+      visibleStart = Math.min(target, visibleFrom);
+      await tick();
       const restore = () => {
         if (!scroller || !anchorKey) return;
         // Collapsed sections hold zero-height copies; use the one on screen.
@@ -546,8 +575,21 @@
         requestAnimationFrame(() => (progScroll = false));
       };
       restore();
-      // Again after late layout (highlighting, images).
-      requestAnimationFrame(restore);
+      // Content above can still grow a frame or two later (markdown, images);
+      // keep the message pinned briefly, and let go as soon as the user scrolls.
+      if (listEl && scroller) {
+        const host = scroller;
+        const settle = new ResizeObserver(restore);
+        const stop = () => {
+          settle.disconnect();
+          host.removeEventListener("touchstart", stop);
+          host.removeEventListener("wheel", stop);
+        };
+        settle.observe(listEl);
+        host.addEventListener("touchstart", stop, { passive: true });
+        host.addEventListener("wheel", stop, { passive: true });
+        setTimeout(stop, 700);
+      }
     } finally {
       loadingOlder = false;
     }
@@ -1747,7 +1789,7 @@
         ? messageTimestamp(finalItem.m)
         : messageTimestamp(turn.items[turn.items.length - 1]?.m);
       const turnKey = userItems[0]
-        ? messageKey(userItems[0].m, userItems[0].i)
+        ? keys[userItems[0].i]!
         : "";
       const storedDuration = turnKey ? workDurations[turnKey] : undefined;
       const timestampDuration =
@@ -1759,7 +1801,7 @@
       const liveSince = active ? (lastPromptAt > 0 ? lastPromptAt : start) : null;
       return {
         ...turn,
-        workKey: turnKey || messageKey(turn.items[0]!.m, turn.startIndex),
+        workKey: turnKey || keys[turn.startIndex]!,
         userItems,
         directItems,
         workItems,
@@ -1924,7 +1966,6 @@
         aria-label="Conversation"
         onscroll={onScroll}
         ontouchstart={onPullStart}
-        ontouchmove={onPullMove}
         ontouchend={onPullEnd}
         ontouchcancel={onPullEnd}
       >
@@ -1994,9 +2035,9 @@
                     : "Pull to load earlier messages"}
             </button>
           {/if}
-          {#each messageTurns as turn (turn.startIndex)}
+          {#each messageTurns as turn (turn.workKey)}
             <div class="message-turn flex flex-col gap-5">
-              {#each turn.userItems as { m, i } (messageKey(m, i))}
+              {#each turn.userItems as { m, i } (keys[i])}
                 {#if editing?.index === i}
                   <div
                     data-inline-message-editor
@@ -2092,7 +2133,7 @@
                         />
                       {/if}
                     {/snippet}
-                    {#each turn.workEntries as entry (entry.kind === "item" ? messageKey(entry.item.m, entry.item.i) : `explore-${messageKey(entry.items[0]!.m, entry.items[0]!.i)}`)}
+                    {#each turn.workEntries as entry (entry.kind === "item" ? keys[entry.item.i] : `explore-${keys[entry.items[0]!.i]}`)}
                       {#if entry.kind === "explore"}
                         <!-- Runs of reads/searches fold into one row; expand to see each step. -->
                         <details class="group/explore min-w-0">
@@ -2103,7 +2144,7 @@
                             <span class="transition-transform group-open/explore:rotate-90" aria-hidden="true">▸</span>
                           </summary>
                           <div class="mt-2 flex min-w-0 flex-col gap-3 border-l-2 border-border/70 pl-3">
-                            {#each entry.items as { m, i } (messageKey(m, i))}
+                            {#each entry.items as { m, i } (keys[i])}
                               {@render workItem(m, i)}
                             {/each}
                           </div>
@@ -2125,7 +2166,7 @@
                 />
               {/if}
 
-              {#each turn.directItems as { m, i } (messageKey(m, i))}
+              {#each turn.directItems as { m, i } (keys[i])}
                 {#if !(m.role === "toolResult" && isPairedToolResult(messages, i))}
                   {@const isLiveBash =
                     busy && m.role === "bashExecution" && i === messages.length - 1}

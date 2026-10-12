@@ -10,6 +10,9 @@ import {
   isFinalAssistantResponse,
   messageTimestamp,
   startsTopLevelTurn,
+  turnStartAtOrBefore,
+  wholeTurnStart,
+  uniqueMessageKeys,
   workSectionOpen,
 } from "./work-section.ts";
 
@@ -124,5 +127,33 @@ describe("read-only commands", () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].kind === "explore" && entries[0].label, "Explored 2 commands");
     assert.equal(groupExploration([bash("a", "rg foo"), bash("b", "npm test")]).length, 2);
+  });
+});
+
+describe("stable message keys", () => {
+  it("survive prepended history and never collide", () => {
+    const a = { role: "assistant", timestamp: 5, content: [{ type: "text", text: "hi" }] };
+    const u = { role: "user", timestamp: 4, content: "go" };
+    const before = uniqueMessageKeys([u, a]);
+    const after = uniqueMessageKeys([{ role: "user", timestamp: 1, content: "old" }, u, a]);
+    assert.deepEqual(after.slice(1), before);
+    const twins = uniqueMessageKeys([a, { ...a }]);
+    assert.notEqual(twins[0], twins[1]);
+  });
+});
+
+describe("whole-turn windowing", () => {
+  // Absolute indexes 100..105: a cut-off turn tail, then two whole turns.
+  const window = [
+    { role: "assistant" }, { role: "toolResult" },
+    { role: "user" }, { role: "assistant" },
+    { role: "user" }, { role: "assistant" },
+  ];
+  it("starts at the first whole turn and snaps reveals to turn starts", () => {
+    assert.equal(wholeTurnStart(window, 100, 100), 102);
+    assert.equal(turnStartAtOrBefore(window, 100, 105), 104);
+    assert.equal(turnStartAtOrBefore(window, 100, 103), 102);
+    assert.equal(turnStartAtOrBefore(window, 100, 101), null); // needs an older page
+    assert.equal(turnStartAtOrBefore(window, 100, 90), null);
   });
 });

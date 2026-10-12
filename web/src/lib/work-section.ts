@@ -1,5 +1,5 @@
 import type { ChatMessage, ContentPart } from "./api.ts";
-import { getParts } from "./api.ts";
+import { getParts, messageKey } from "./api.ts";
 
 export function isComposerCommand(message: ChatMessage): boolean {
   return (
@@ -205,4 +205,40 @@ export function groupExploration<T extends { m: ChatMessage }>(items: T[]): Work
   }
   flush();
   return out;
+}
+
+/**
+ * One key per message, stable when older history is prepended, and unique so
+ * keyed {#each} blocks never collide (rare same-timestamp twins get a suffix).
+ */
+export function uniqueMessageKeys(messages: ChatMessage[]): string[] {
+  const seen = new Map<string, number>();
+  return messages.map((message, index) => {
+    const key = messageKey(message, index);
+    const count = seen.get(key) ?? 0;
+    seen.set(key, count + 1);
+    return count ? `${key}~${count}` : key;
+  });
+}
+
+/*
+ * History windowing works in absolute transcript indexes (`pageStart` is the
+ * absolute index of messages[0]). Only whole turns are shown: a turn cut off by
+ * the window would regroup, and shift on screen, as its older half loads.
+ */
+
+/** First turn start at or after `fromAbs`; `fromAbs` when the window holds none. */
+export function wholeTurnStart(messages: ChatMessage[], pageStart: number, fromAbs: number): number {
+  for (let i = Math.max(0, fromAbs - pageStart); i < messages.length; i++) {
+    if (startsTopLevelTurn(messages[i]!)) return pageStart + i;
+  }
+  return fromAbs;
+}
+
+/** Last turn start at or before `targetAbs` within the loaded window, or null. */
+export function turnStartAtOrBefore(messages: ChatMessage[], pageStart: number, targetAbs: number): number | null {
+  for (let i = Math.min(messages.length - 1, targetAbs - pageStart); i >= 0; i--) {
+    if (startsTopLevelTurn(messages[i]!)) return pageStart + i;
+  }
+  return null;
 }
