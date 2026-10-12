@@ -17,8 +17,8 @@ it("ships standalone edge-to-edge PWA metadata and correctly sized icons", async
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.start_url, "/");
   assert.match(html, /viewport-fit=cover/);
-  // Full-screen so the header can tuck up to the Dynamic Island (see --pi-top-inset).
-  assert.match(html, /apple-mobile-web-app-status-bar-style" content="black-translucent/);
+  // Not black-translucent: iOS lays translucent installed apps out a status bar short.
+  assert.match(html, /apple-mobile-web-app-status-bar-style" content="default/);
   assert.deepEqual(await pngSize("apple-touch-icon.png"), [180, 180]);
   assert.deepEqual(await pngSize("icon-192.png"), [192, 192]);
   assert.deepEqual(await pngSize("icon-512.png"), [512, 512]);

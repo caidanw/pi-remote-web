@@ -320,7 +320,7 @@
 />
 
 {#if open}
-  <div class="fixed inset-0 z-[60] flex bg-background pt-[var(--pi-top-inset)]" role="dialog" aria-modal="true" aria-label="Skill workspace">
+  <div class="fixed inset-0 z-[60] flex bg-background" role="dialog" aria-modal="true" aria-label="Skill workspace">
     <aside class="flex w-80 shrink-0 flex-col border-r border-border bg-muted/20">
       <div class="border-b border-border p-3">
         <div class="mb-3 flex items-center gap-2">

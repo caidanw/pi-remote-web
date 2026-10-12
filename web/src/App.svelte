@@ -820,7 +820,7 @@
 </script>
 
 {#if authReady && !authRequired}
-<div class="pi-app-shell flex w-full overflow-hidden bg-[var(--pi-canvas)] text-foreground">
+<div class="pi-app-shell flex h-svh w-full overflow-hidden bg-[var(--pi-canvas)] text-foreground">
   {#if sidebarOpen}
     <!-- Phones: overlay the chat and dim it; tablets and up keep the split layout. -->
     <button
@@ -829,7 +829,7 @@
       aria-label="Close sessions sidebar"
       onclick={() => setSidebarOpen(false)}
     ></button>
-    <div class="fixed inset-y-0 left-0 z-50 flex pt-[var(--pi-top-inset)] md:static md:z-auto md:pt-0">
+    <div class="fixed inset-y-0 left-0 z-50 flex md:static md:z-auto">
       <SessionList
         {sessions}
         selectedId={selected?.id}
@@ -968,7 +968,7 @@
       aria-label="Close git changes sidebar"
       onclick={() => setGitSidebarOpen(false)}
     ></button>
-    <div class="fixed inset-y-0 right-0 z-50 flex pt-[var(--pi-top-inset)] md:static md:z-auto md:pt-0">
+    <div class="fixed inset-y-0 right-0 z-50 flex md:static md:z-auto">
       <GitDiffSidebar
         sessionId={selected?.running || selected?.remote ? selected.id : undefined}
         cwd={selected?.cwd}

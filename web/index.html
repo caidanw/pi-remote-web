@@ -9,31 +9,14 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Pi" />
-    <!-- Full-screen: the page draws under the status bar (icons follow light/dark mode) so the
-         header can tuck up to the Dynamic Island. iOS reads this only at install time. -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- "default", not black-translucent: translucent lays installed apps out one status bar
+         short, leaving a dead band above the home indicator that nothing can draw in. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#faf9f7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#18181b" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
     <title>Pi Remote Web</title>
     <script>
-      // iOS bug with black-translucent: an installed app's layout viewport is one
-      // status bar short (innerHeight = screen height - top inset), leaving a dead
-      // band at the bottom. Size the app to the real screen when that signature shows.
-      (function () {
-        if (!navigator.standalone) return;
-        function fit() {
-          var landscape = matchMedia("(orientation: landscape)").matches;
-          var full = landscape ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
-          var missing = full - window.innerHeight;
-          var root = document.documentElement.style;
-          if (missing > 30 && missing < 80) root.setProperty("--pi-app-height", full + "px");
-          else root.removeProperty("--pi-app-height"); // e.g. keyboard open: normal sizing
-        }
-        fit();
-        addEventListener("resize", fit);
-        addEventListener("orientationchange", fit);
-      })();
       // This origin previously hosted another app: drop its service workers and
       // caches, keeping only our push-notification worker (/sw.js).
       (function () {
