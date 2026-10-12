@@ -448,7 +448,31 @@
     if (!scroller || progScroll) return;
     const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     stickBottom = gap < 100;
-    if (scroller.scrollTop < 400) void loadOlder();
+  }
+
+  // Pull down at the top to load older messages (touch); desktop uses the button.
+  const PULL_TRIGGER = 64;
+  let pullStartY: number | null = null;
+  let pullDistance = $state(0);
+  const canLoadOlder = $derived(hasOlderHistory || hiddenMsgCount > 0);
+
+  function onPullStart(event: TouchEvent) {
+    pullStartY = scroller && scroller.scrollTop <= 0 && canLoadOlder && !loadingOlder
+      ? event.touches[0]!.clientY
+      : null;
+  }
+
+  function onPullMove(event: TouchEvent) {
+    if (pullStartY === null || !scroller) return;
+    const dy = event.touches[0]!.clientY - pullStartY;
+    // Resistance so the indicator trails the finger.
+    pullDistance = scroller.scrollTop <= 0 && dy > 0 ? Math.min(dy * 0.5, PULL_TRIGGER * 1.6) : 0;
+  }
+
+  function onPullEnd() {
+    if (pullDistance >= PULL_TRIGGER) void loadOlder();
+    pullDistance = 0;
+    pullStartY = null;
   }
 
   /**
@@ -461,7 +485,19 @@
     if (hiddenMsgCount === 0 && !hasOlderHistory) return;
     loadingOlder = true;
     const startHeight = scroller?.scrollHeight ?? 0;
-    const anchor = scroller ? startHeight - scroller.scrollTop : 0;
+    // Pin the first message on screen by a stable role:timestamp key (elements
+    // remount when a fetch shifts indexes, and a turn's first message changes as
+    // older ones join it) and put it back at the same offset afterwards.
+    const top = scroller?.getBoundingClientRect().top ?? 0;
+    const visible = (el: HTMLElement) => {
+      const rect = el.getBoundingClientRect();
+      return rect.height > 0 && rect.bottom > top;
+    };
+    const anchor = scroller
+      ? [...scroller.querySelectorAll<HTMLElement>("[data-anchor]")].find(visible)
+      : undefined;
+    const anchorKey = anchor?.dataset.anchor;
+    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
     try {
       // Revealed messages can land inside a collapsed work section and add no
       // height; keep stepping until something visible appears (bounded).
@@ -477,11 +513,20 @@
         await tick();
         if (!scroller || scroller.scrollHeight > startHeight) break;
       }
-      if (scroller) {
+      const restore = () => {
+        if (!scroller || !anchorKey) return;
+        // Collapsed sections hold zero-height copies; use the one on screen.
+        const el = [
+          ...scroller.querySelectorAll<HTMLElement>(`[data-anchor="${CSS.escape(anchorKey)}"]`),
+        ].find((node) => node.getBoundingClientRect().height > 0);
+        if (!el) return;
         progScroll = true;
-        scroller.scrollTop = scroller.scrollHeight - anchor;
+        scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchorOffset;
         requestAnimationFrame(() => (progScroll = false));
-      }
+      };
+      restore();
+      // Again after late layout (highlighting, images).
+      requestAnimationFrame(restore);
     } finally {
       loadingOlder = false;
     }
@@ -1853,8 +1898,14 @@
     <div class="relative min-h-0 flex-1">
       <div
         bind:this={scroller}
-        class="absolute inset-0 overflow-y-auto px-4 sm:px-8 lg:px-12"
+        class="absolute inset-0 overflow-y-auto overscroll-y-none px-4 sm:px-8 lg:px-12"
+        role="region"
+        aria-label="Conversation"
         onscroll={onScroll}
+        ontouchstart={onPullStart}
+        ontouchmove={onPullMove}
+        ontouchend={onPullEnd}
+        ontouchcancel={onPullEnd}
       >
         <div class="mx-auto flex w-full max-w-5xl flex-col gap-5 py-6">
           {#if loadingTranscript && messages.length === 0}
@@ -1870,8 +1921,8 @@
               Loading conversation…
             </div>
           {/if}
-          {#if hasOlderHistory || hiddenMsgCount > 0}
-            <!-- Scrolling to the top does this automatically; the button is the accessible fallback. -->
+          {#if canLoadOlder}
+            <!-- Stays mounted while loading so nothing above the pinned message changes size. -->
             <button
               type="button"
               class="mx-auto rounded-full border border-border/70 bg-background/80 px-3 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -2078,6 +2129,20 @@
         </div>
       </div>
 
+      {#if pullDistance > 0 || loadingOlder}
+        <!-- Floats over the list so it never shifts the message you're reading. -->
+        <div
+          class="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-border/80 bg-background/95 px-3 py-1 text-[11px] font-medium text-muted-foreground shadow-md backdrop-blur-sm"
+          style:opacity={loadingOlder ? 1 : Math.min(1, pullDistance / PULL_TRIGGER)}
+          role="status"
+        >
+          {loadingOlder
+            ? "Loading earlier messages…"
+            : pullDistance >= PULL_TRIGGER
+              ? "Release to load earlier messages"
+              : "Pull to load earlier messages"}
+        </div>
+      {/if}
       {#if !stickBottom}
         <button
           type="button"

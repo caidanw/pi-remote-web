@@ -9,7 +9,6 @@
     toolResultText,
   } from "$lib/api";
   import { findMessagePlugin } from "$lib/plugins/registry";
-  import { hasAssistantText } from "$lib/work-section";
   import {
     formatTokenCount,
     parseSkillCommand,
@@ -104,8 +103,6 @@
       ? message.thinking.trim()
       : "",
   );
-  // Copy belongs on the answer, not on every work step (tool args count as `text`).
-  const showAssistantCopy = $derived(assistantMode === "final-only" && hasAssistantText(message));
   const lastToolIdx = $derived.by(() => {
     let idx = -1;
     for (let i = 0; i < parts.length; i++) {
@@ -189,7 +186,8 @@
   </details>
 {/snippet}
 
-<div class="group/msg relative">
+<!-- data-anchor: stable key ChatPanel uses to hold scroll position while loading history. -->
+<div class="group/msg relative" data-anchor={`${message.role}:${message.timestamp ?? index}`}>
   {#if plugin?.Message}
     {@const Comp = plugin.Message}
     <Comp message={message} text={text} />
@@ -450,28 +448,6 @@
             </div>
           {/if}
         </div>
-        {#if showAssistantCopy}
-          <!-- Under the answer so the text keeps the full width; hover-revealed on desktop, always visible on touch. -->
-          <div
-            class="mt-1 flex focus-within:opacity-100 pointer-fine:opacity-0 pointer-fine:transition-opacity pointer-fine:group-hover/msg:opacity-100"
-          >
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              class="size-7"
-              title="Copy response"
-              aria-label="Copy assistant response"
-              onclick={copyMessage}
-            >
-              {#if copied}
-                <Check class="size-3.5 text-muted-foreground" />
-              {:else}
-                <Copy class="size-3.5 text-muted-foreground" />
-              {/if}
-            </Button>
-          </div>
-        {/if}
       </div>
     </Message>
   {:else}
