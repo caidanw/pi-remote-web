@@ -65,7 +65,7 @@
   import Bug from "@lucide/svelte/icons/bug";
   import MapIcon from "@lucide/svelte/icons/map";
   import Telescope from "@lucide/svelte/icons/telescope";
-  import { playFeedback } from "$lib/feedback";
+  import { playFeedback, prefersReducedMotion } from "$lib/feedback";
 
   const LS_CWD = "pi-remote-web-last-cwd";
   const LS_MODEL = "pi-remote-web-last-model";
@@ -452,17 +452,27 @@
 
   // Pull down at the top to load older messages (touch); desktop uses the button.
   const PULL_TRIGGER = 64;
+  /** Where the list rests while loading, so the spinner stays in view. */
+  const PULL_HOLD = 48;
   let pullStartY: number | null = null;
   let pullDistance = $state(0);
+  let dragging = $state(false);
+  let pullLoading = $state(false);
+  let listEl: HTMLDivElement | undefined = $state();
   const canLoadOlder = $derived(hasOlderHistory || hiddenMsgCount > 0);
   const pullReady = $derived(pullDistance >= PULL_TRIGGER);
-  // Touch screens pull; mice click. Only the label differs.
+  // Touch screens pull; mice click. Reduced motion keeps the text-only label.
   const touchInput = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  const animatePull = touchInput && !prefersReducedMotion();
+  /** The list follows the finger (transform only; no re-layout). */
+  const listShift = $derived(!animatePull ? 0 : pullLoading ? PULL_HOLD : pullDistance);
+  const pullProgress = $derived(pullLoading ? 1 : Math.min(1, pullDistance / PULL_TRIGGER));
 
   function onPullStart(event: TouchEvent) {
     pullStartY = scroller && scroller.scrollTop <= 0 && canLoadOlder && !loadingOlder
       ? event.touches[0]!.clientY
       : null;
+    dragging = pullStartY !== null;
   }
 
   function onPullMove(event: TouchEvent) {
@@ -473,14 +483,18 @@
   }
 
   function onPullEnd() {
-    if (pullDistance >= PULL_TRIGGER) void loadOlder();
+    if (pullDistance >= PULL_TRIGGER) {
+      pullLoading = true;
+      void loadOlder().finally(() => (pullLoading = false));
+    }
     pullDistance = 0;
     pullStartY = null;
+    dragging = false;
   }
 
   /**
    * Reveal REVEAL_STEP older messages; fetch another page only when the loaded
-   * ones run out. The scroll anchor is kept by pinning scrollHeight.
+   * ones run out. The first message on screen keeps its position.
    */
   async function loadOlder() {
     const id = wiredId;
@@ -500,7 +514,10 @@
       ? [...scroller.querySelectorAll<HTMLElement>("[data-anchor]")].find(visible)
       : undefined;
     const anchorKey = anchor?.dataset.anchor;
-    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
+    // Measured within the list, so the pull transform cancels out.
+    const withinList = (el: HTMLElement) => el.getBoundingClientRect().top - (listEl?.getBoundingClientRect().top ?? 0);
+    const anchorOffset = anchor ? withinList(anchor) : 0;
+    const startTop = scroller?.scrollTop ?? 0;
     try {
       // Revealed messages can land inside a collapsed work section and add no
       // height; keep stepping until something visible appears (bounded).
@@ -524,7 +541,8 @@
         ].find((node) => node.getBoundingClientRect().height > 0);
         if (!el) return;
         progScroll = true;
-        scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchorOffset;
+        // Absolute target, so running this twice is harmless.
+        scroller.scrollTop = startTop + withinList(el) - anchorOffset;
         requestAnimationFrame(() => (progScroll = false));
       };
       restore();
@@ -1910,7 +1928,41 @@
         ontouchend={onPullEnd}
         ontouchcancel={onPullEnd}
       >
-        <div class="mx-auto flex w-full max-w-5xl flex-col gap-5 py-6">
+        {#if listShift > 0}
+          <!-- Pull indicator: a ring that fills toward the trigger, then spins while loading. -->
+          <div
+            class="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-center"
+            style:height="{listShift + 24}px"
+            aria-hidden="true"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              class="size-6 transition-colors {pullLoading ? 'animate-spin' : ''} {pullReady || pullLoading ? 'text-foreground' : 'text-muted-foreground'}"
+              style:opacity={Math.min(1, pullProgress * 1.4)}
+            >
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-opacity="0.15" stroke-width="2.5" />
+              <circle
+                cx="12"
+                cy="12"
+                r="9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                pathLength="100"
+                stroke-dasharray="100"
+                stroke-dashoffset={pullLoading ? 70 : 100 - pullProgress * 100}
+                transform="rotate(-90 12 12)"
+              />
+            </svg>
+          </div>
+        {/if}
+        <div
+          bind:this={listEl}
+          class="mx-auto flex w-full max-w-5xl flex-col gap-5 py-6"
+          style:transform={listShift ? `translateY(${listShift}px)` : undefined}
+          style:transition={dragging ? "none" : "transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)"}
+        >
           {#if loadingTranscript && messages.length === 0}
             <div
               class="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"
