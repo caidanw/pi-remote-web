@@ -16,6 +16,12 @@
   --pi-canvas-footer: color-mix(in oklab, #faf9f7 92%, white);
   --pi-sidebar-width: 360px;
   --pi-right-sidebar-width: 440px;
+  /*
+   * Top inset for the full-screen PWA. The safe area (62pt on Dynamic Island
+   * phones) reserves room below the island's bottom edge (~51pt); 10pt of that
+   * is usable. Plain 20pt status bars keep their full inset.
+   */
+  --pi-top-inset: max(calc(env(safe-area-inset-top) - 10px), min(env(safe-area-inset-top), 20px));
 }
 
 html.dark {
@@ -41,9 +47,19 @@ body {
 }
 
 .pi-app-shell {
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--pi-top-inset);
   padding-right: env(safe-area-inset-right);
   padding-left: env(safe-area-inset-left);
+}
+
+/* 44pt touch target around a smaller visual control (Apple HIG). */
+.pi-hit {
+  position: relative;
+}
+.pi-hit::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 
 ::selection {

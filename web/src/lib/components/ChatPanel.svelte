@@ -1851,12 +1851,12 @@
   {#if isHome}
     {#if showExpandSidebar || showExpandGit}
       <header
-        class="flex h-11 shrink-0 items-center gap-1 border-b border-black/[0.06] bg-[var(--pi-canvas)] px-2 dark:border-white/10"
+        class="flex h-8 shrink-0 items-center gap-1 border-b border-black/[0.06] bg-[var(--pi-canvas)] px-2 dark:border-white/10 sm:h-11"
       >
         {#if showExpandSidebar && onExpandSidebar}
           <button
             type="button"
-            class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            class="pi-hit inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title="Expand sidebar"
             aria-label="Expand sidebar"
             onclick={onExpandSidebar}
@@ -1868,7 +1868,7 @@
         {#if showExpandGit && onExpandGit}
           <button
             type="button"
-            class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            class="pi-hit inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title="Show changes"
             aria-label="Show git changes sidebar"
             onclick={onExpandGit}

@@ -151,13 +151,13 @@
 </script>
 
 <header
-  class="flex h-11 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-[var(--pi-canvas)] px-2 dark:border-white/10 sm:gap-3 sm:px-3"
+  class="flex h-8 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-[var(--pi-canvas)] px-2 dark:border-white/10 sm:h-11 sm:gap-3 sm:px-3"
 >
   {#if showExpandSidebar && onExpandSidebar}
     <Button
       variant="ghost"
       size="icon"
-      class="size-8 shrink-0 text-muted-foreground"
+      class="pi-hit size-8 shrink-0 text-muted-foreground"
       title="Expand sidebar"
       aria-label="Expand sidebar"
       onclick={onExpandSidebar}
@@ -244,7 +244,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="size-8 shrink-0 text-muted-foreground"
+        class="pi-hit size-8 shrink-0 text-muted-foreground"
         title="Show changes"
         aria-label="Show git changes sidebar"
         onclick={onExpandGit}
