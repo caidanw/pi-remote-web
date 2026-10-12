@@ -48,6 +48,8 @@ export type SessionRow = {
   runtimeId?: string;
   connected?: boolean;
   owner?: "terminal" | "browser" | "offline";
+  /** Opened as a read-only copy because another Pi process owns the file. */
+  readOnly?: boolean;
   browserOwned?: boolean;
   busy?: boolean;
   releasing?: boolean;
@@ -326,6 +328,14 @@ export function getMessages(id: string, opts?: { limit?: number }) {
     start?: number;
     hasMore?: boolean;
   }>(`/api/sessions/${encodeURIComponent(id)}/messages${query}`);
+}
+
+/** Read-only messages straight from a session file another Pi process owns. */
+export function getTranscript(path: string, opts?: { limit?: number }) {
+  const limit = opts?.limit ? `&limit=${encodeURIComponent(String(opts.limit))}` : "";
+  return req<{ messages: ChatMessage[]; hasMore?: boolean }>(
+    `/api/transcript?path=${encodeURIComponent(path)}${limit}`,
+  );
 }
 
 /** Image payload for multimodal prompt/steer/follow-up (pi ImageContent). */

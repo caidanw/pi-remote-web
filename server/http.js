@@ -16,6 +16,7 @@ import {
   shouldReplayRing,
 } from "./sse-protocol.js";
 import { messagePage } from "./message-window.js";
+import { readTranscript } from "./transcript.js";
 
 /**
  * Host lifecycle for /api/shutdown (extension stays alive while the host closes).
@@ -820,6 +821,12 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
         remoteBroker,
       );
       return json(res, 200, { sessions });
+    }
+
+    // GET /api/transcript?path= : read-only copy of a session another Pi process owns
+    if (method === "GET" && pathname === "/api/transcript") {
+      const transcript = await readTranscript(searchParams.get("path") || "");
+      return json(res, 200, messagePage(transcript.messages, searchParams));
     }
 
     // POST /api/sessions  { path?, cwd?, fresh?, content?, filename? }

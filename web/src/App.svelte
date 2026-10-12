@@ -207,7 +207,8 @@
         );
         if (row) {
           const nextId = row.running ? row.id : selected.id;
-          selected = { ...selected, ...row, id: nextId };
+          // A read-only copy goes live once its terminal connects (e.g. after /reload).
+          selected = { ...selected, ...row, id: nextId, readOnly: selected.readOnly && !row.running };
           if (pathSessionId() && pathSessionId() !== nextId) {
             setSessionUrl(nextId, "replace");
           }
@@ -276,12 +277,25 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const code = (e as { code?: string })?.code;
-      if (code === "SESSION_MAYBE_LIVE" && s.path) forceOpen = { path: s.path, row: s };
-      if (!/Session not open/i.test(msg)) err = msg;
+      if ((code === "SESSION_OWNED" || code === "SESSION_MAYBE_LIVE") && s.path) {
+        // Another Pi process has it: show a read-only copy instead of an error on the home screen.
+        if (code === "SESSION_MAYBE_LIVE") forceOpen = { path: s.path, row: s };
+        selected = { ...s, running: false, readOnly: true };
+        setSessionUrl(s.id, urlMode);
+      } else if (!/Session not open/i.test(msg)) err = msg;
     } finally {
       opening = false;
     }
   }
+
+  // Watch a read-only copy for its terminal connecting, then switch to live.
+  $effect(() => {
+    if (!selected?.readOnly) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 4000);
+    return () => clearInterval(timer);
+  });
 
   /** Offered when a session looks live in a terminal that never joined the daemon. */
   let forceOpen = $state<{ path: string; row: SessionRow } | null>(null);
@@ -938,6 +952,12 @@
       showExpandGit={!gitSidebarOpen}
       onExpandSidebar={() => setSidebarOpen(true)}
       onExpandGit={() => setGitSidebarOpen(true)}
+      onTakeOver={forceOpen && selected?.readOnly && forceOpen.path === selected.path
+        ? () => {
+            const target = forceOpen;
+            if (target) void onSelect(target.row);
+          }
+        : undefined}
     />
     {/if}
   </div>

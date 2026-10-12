@@ -17,6 +17,7 @@
     bash,
     followUp,
     getMessages,
+    getTranscript,
     getSession,
     isPairedToolResult,
     listCommands,
@@ -163,6 +164,8 @@
     showExpandGit?: boolean;
     onExpandSidebar?: () => void;
     onExpandGit?: () => void;
+    /** Read-only copy of a terminal session: take it over in the browser. */
+    onTakeOver?: () => void;
   };
 
   let {
@@ -179,6 +182,7 @@
     showExpandGit = false,
     onExpandSidebar,
     onExpandGit,
+    onTakeOver,
   }: Props = $props();
 
   let messages = $state<ChatMessage[]>([]);
@@ -379,7 +383,31 @@
     return () => clearInterval(id);
   });
   /** Keep stream lifecycle keyed to identity, not parent metadata patches. */
-  const activeSessionId = $derived(session?.id ?? null);
+  // Read-only copies never wire the live stream; they load from disk below.
+  const activeSessionId = $derived(session?.readOnly ? null : (session?.id ?? null));
+  const readOnlyPath = $derived(session?.readOnly ? (session.path ?? null) : null);
+  $effect(() => {
+    const path = readOnlyPath;
+    if (!path) return;
+    let current = true;
+    loadingTranscript = true;
+    error = null;
+    getTranscript(path, { limit: FETCH_WINDOW })
+      .then((page) => {
+        if (!current) return;
+        messages = page.messages;
+        void scrollBottom();
+      })
+      .catch((e) => {
+        if (current) error = e instanceof Error ? e.message : String(e);
+      })
+      .finally(() => {
+        if (current) loadingTranscript = false;
+      });
+    return () => {
+      current = false;
+    };
+  });
   /** Prefer local (live) model; fall back to session prop so picker never blanks. */
   const activeModel = $derived(model ?? session?.model);
   const hiddenMsgCount = $derived(
@@ -2009,7 +2037,25 @@
       {/if}
     </div>
 
-    {#if !editing}
+    {#if session?.readOnly}
+      <footer class="chat-footer p-3">
+        <div
+          class="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-3 rounded-xl border border-border/80 bg-card px-4 py-3 text-sm text-muted-foreground"
+          role="status"
+        >
+          <span class="min-w-0 flex-1">
+            This session is open in a terminal that isn't connected, so this is a read-only copy.
+            Type <code class="rounded bg-muted px-1 font-mono text-[12px] text-foreground">/reload</code>
+            in that terminal and it will appear here live.
+          </span>
+          {#if onTakeOver}
+            <Button type="button" variant="outline" size="sm" onclick={onTakeOver}>
+              Take over here
+            </Button>
+          {/if}
+        </div>
+      </footer>
+    {:else if !editing}
       <footer class="chat-footer p-3">
         <div
           class="relative mx-auto w-full max-w-5xl"
