@@ -528,13 +528,11 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth) {
     if (auth && method === "GET" && pathname === "/api/auth/status") {
       res.setHeader("Cache-Control", "no-store");
       const session = await auth.sessionFromRequest(req);
-      return json(
-        res,
-        200,
-        session
-          ? { authenticated: true, csrf: session.csrf, expiresAt: session.exp }
-          : { authenticated: false },
-      );
+      if (!session) return json(res, 200, { authenticated: false });
+      // Sliding expiry: every app open renews the cookie, so pairing is one-time.
+      const renewed = await auth.issueSession(session.csrf);
+      res.setHeader("Set-Cookie", auth.cookieHeader(renewed.cookie));
+      return json(res, 200, { authenticated: true, csrf: renewed.csrf, expiresAt: renewed.expiresAt });
     }
 
     if (auth && method === "POST" && pathname === "/api/auth/exchange") {

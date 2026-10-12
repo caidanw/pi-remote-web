@@ -179,6 +179,18 @@ describe("browser authentication", () => {
     assert.equal(await auth.sessionFromRequest({ headers: { cookie: `${AUTH_COOKIE}=${fresh.cookie}` } }), null);
   });
 
+  it("renews a session with the same csrf and a later expiry", async () => {
+    let now = 5_000;
+    const { auth } = await authFixture({ now: () => now, sessionTtlMs: 1_000 });
+    const first = await auth.issueSession();
+    now += 900;
+    const renewed = await auth.issueSession(first.csrf);
+    assert.equal(renewed.csrf, first.csrf);
+    now += 900; // past the first expiry, inside the renewed one
+    const session = await auth.sessionFromRequest({ headers: { cookie: `${AUTH_COOKIE}=${renewed.cookie}` } });
+    assert.equal(session.csrf, first.csrf);
+  });
+
   it("stores authentication material with user-only permissions", async () => {
     const { auth } = await authFixture();
     const token = await auth.issuePairingToken();
@@ -347,9 +359,17 @@ describe("browser authentication", () => {
     assert.match(setCookie, /; HttpOnly;/);
     assert.match(setCookie, /; Secure;/);
     assert.match(setCookie, /; SameSite=Strict$/);
-    assert.match(setCookie, /; Max-Age=43200;/);
+    assert.match(setCookie, /; Max-Age=34560000;/);
     assert.doesNotMatch(setCookie, /Domain=/i);
     assert.equal(exchanged.headers["cache-control"], "no-store");
+
+    // Opening the app renews the cookie and keeps the csrf stable.
+    const status = await request(port, "/api/auth/status", {
+      headers: { Cookie: setCookie.split(";")[0] },
+    });
+    assert.equal(status.body.authenticated, true);
+    assert.equal(status.body.csrf, exchanged.body.csrf);
+    assert.match(status.headers["set-cookie"][0], /; Max-Age=34560000;/);
   });
 
   it("strictly validates Host and Origin for loopback and public Tailscale origins", async () => {

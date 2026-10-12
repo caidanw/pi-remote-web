@@ -6,7 +6,8 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export const AUTH_COOKIE = "__Host-pi_remote_web";
 export const PAIRING_TTL_MS = 5 * 60 * 1000;
-export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+// Browsers cap cookie Max-Age at 400 days; /api/auth/status slides it on every app open.
+export const SESSION_TTL_MS = 400 * 24 * 60 * 60 * 1000;
 
 function authError(message, code, status = 401) {
   const error = new Error(message);
@@ -170,12 +171,13 @@ export class AuthManager {
     return this.issueSession();
   }
 
-  async issueSession() {
+  /** Pass an existing session's csrf to extend it without breaking in-flight requests. */
+  async issueSession(csrf = randomBytes(24).toString("base64url")) {
     const now = this.now();
     const session = {
       iat: now,
       exp: now + this.sessionTtlMs,
-      csrf: randomBytes(24).toString("base64url"),
+      csrf,
       nonce: randomBytes(16).toString("base64url"),
     };
     const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
