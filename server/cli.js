@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Persistent daemon: node server/cli.js [--port 3847]
+ * pi-remote-web CLI. `daemon` runs the server; no args prints help.
  */
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -29,6 +29,33 @@ const i = args.indexOf("--port");
 if (i >= 0 && args[i + 1]) port = Number(args[i + 1]);
 
 const serviceCommand = args[0];
+const COMMANDS = ["daemon", "pair", "revoke-all", "install", "uninstall", "start", "stop", "restart", "status", "doctor", "logs"];
+const HELP = `Usage: pi-remote-web <command> [--port <port>]
+
+Commands:
+  daemon       run the server in the foreground (127.0.0.1:${port})
+  pair         print a QR code + five-minute single-use pairing URL
+  revoke-all   invalidate every paired browser
+
+macOS service (LaunchAgent):
+  install      install and start the background service
+  uninstall    stop and remove the service
+  start | stop | restart
+  status       health, URLs, socket, and live-session counts
+  doctor       check permissions, locks, launchd, and Tailscale
+  logs         recent daemon logs
+
+  help         show this help
+
+Env: PI_REMOTE_WEB_PORT, PI_REMOTE_WEB_PUBLIC_URL, PI_REMOTE_WEB_INSECURE_NO_AUTH=1`;
+if (!serviceCommand || ["help", "-h", "--help"].includes(serviceCommand)) {
+  console.log(HELP);
+  process.exit(0);
+}
+if (!COMMANDS.includes(serviceCommand)) {
+  console.error(`Unknown command: ${serviceCommand}\n\n${HELP}`);
+  process.exit(1);
+}
 // Tailscale Serve already knows the HTTPS hostname; only override it explicitly.
 const publicUrl = process.env.PI_REMOTE_WEB_PUBLIC_URL ?? (await detectPublicUrl(port));
 if (["install", "uninstall", "start", "stop", "restart", "status", "doctor", "logs"].includes(serviceCommand)) {

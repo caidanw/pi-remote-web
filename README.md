@@ -25,6 +25,7 @@ The renamed package is not published to npm yet. To put the `pi-remote-web` CLI
 
 ```bash
 npm install && npm link   # undo: npm unlink -g pi-remote-web
+pi-remote-web help        # list commands; `pi-remote-web daemon` runs the server
 ```
 
 ## Usage
