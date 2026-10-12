@@ -28,6 +28,9 @@ body,
 #app {
   height: 100%;
   margin: 0;
+  /* iOS rubber-bands the whole page when you drag non-scrolling chrome
+     (header, composer, buttons); scroll areas still scroll on their own. */
+  overscroll-behavior: none;
 }
 
 body {

@@ -596,12 +596,35 @@
   }
 
   /** Open / switch session + jump button — never on stream/message updates. */
-  async function scrollBottom() {
+  async function scrollBottom(opts?: { smooth?: boolean }) {
     stickBottom = true;
     await tick();
     // Home ↔ thread swaps the scroller; wait one frame if still missing.
     if (!scroller) await new Promise<void>((r) => requestAnimationFrame(() => r()));
     if (!scroller) return;
+    const reduced = prefersReducedMotion() || document.documentElement.dataset.piMotion === "none";
+    if (opts?.smooth && !reduced) {
+      // Glide down (the "Latest" button). Stick tracking pauses so the button
+      // doesn't flicker back mid-glide; afterwards, re-measure in case the user
+      // took over, and settle exactly on the bottom (new output may have landed).
+      const el = scroller;
+      progScroll = true;
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(fallback);
+        el.removeEventListener("scrollend", done);
+        progScroll = false;
+        measureStick();
+        if (stickBottom) el.scrollTop = el.scrollHeight;
+      };
+      // scrollend is new in Safari; the timeout covers older versions.
+      const fallback = setTimeout(done, 900);
+      el.addEventListener("scrollend", done);
+      return;
+    }
     progScroll = true;
     scroller.scrollTop = scroller.scrollHeight;
     requestAnimationFrame(() => {
@@ -2236,7 +2259,7 @@
         <button
           type="button"
           class="absolute bottom-3 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1 rounded-full border border-border/80 bg-background/95 px-3 text-[11px] font-medium text-muted-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
-          onclick={() => scrollBottom()}
+          onclick={() => scrollBottom({ smooth: true })}
         >
           <ChevronDown class="size-3.5" />
           {busy ? "Jump to latest" : "Latest"}
