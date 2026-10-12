@@ -17,6 +17,10 @@
   import {
     bashOutputPresentation,
     builtinToolPresentation,
+    genericToolTitle,
+    nestedCallSummary,
+    toolDuration,
+    toolStartedAt,
   } from "$lib/tool-presentation";
   import SpecialMessageCard from "$lib/components/SpecialMessageCard.svelte";
   import ToolCallCard from "$lib/components/ToolCallCard.svelte";
@@ -39,8 +43,6 @@
     onEditUser?: (message: ChatMessage) => void;
     /** Fork session from this user msg. */
     onForkUser?: (message: ChatMessage) => void;
-    /** Pin under chat header while this turn's reply scrolls. */
-    sticky?: boolean;
     /** Split the terminal assistant message into hidden work and visible final text. */
     assistantMode?: "all" | "work-only" | "final-only";
   };
@@ -52,45 +54,13 @@
     index = -1,
     onEditUser,
     onForkUser,
-    sticky = false,
     assistantMode = "all",
   }: Props = $props();
-
-  let bubbleEl: HTMLDivElement | undefined = $state();
-  let stuck = $state(false);
-
-  $effect(() => {
-    if (!sticky || !bubbleEl) {
-      stuck = false;
-      return;
-    }
-    const el = bubbleEl;
-    const root = el.closest(".overflow-y-auto") as HTMLElement | null;
-    if (!root) {
-      stuck = false;
-      return;
-    }
-    const measure = () => {
-      stuck = el.getBoundingClientRect().top <= root.getBoundingClientRect().top + 1;
-    };
-    measure();
-    root.addEventListener("scroll", measure, { passive: true });
-    window.addEventListener("resize", measure);
-    return () => {
-      root.removeEventListener("scroll", measure);
-      window.removeEventListener("resize", measure);
-    };
-  });
 
   const plugin = $derived(findMessagePlugin(message));
   const role = $derived(message.role || "unknown");
   const parts = $derived(getParts(message));
   const text = $derived(messageText(message));
-  const previewText = $derived(
-    (text || (typeof message.content === "string" ? message.content : ""))
-      .replace(/\s+/g, " ")
-      .trim(),
-  );
 
   const msgStreamId = $derived(
     String(message._key ?? message.id ?? message.timestamp ?? message.role ?? "msg"),
@@ -113,6 +83,12 @@
 
   function isThinkPart(p: ContentPart | undefined): boolean {
     return p?.type === "thinking" || p?.type === "reasoning";
+  }
+
+  /** Reasoning summaries usually open with a **bold title**; use it as the collapsed label. */
+  function thinkingTitle(body: string): string {
+    const bold = body.match(/^\s*\*\*(.+?)\*\*/);
+    return bold?.[1]?.trim() || "Thinking";
   }
 
   function partThinkingText(p: ContentPart): string {
@@ -198,7 +174,22 @@
   }
 </script>
 
-<div bind:this={bubbleEl} class="group/msg relative {sticky ? 'sticky top-0 z-20 bg-[var(--pi-canvas)] py-1' : ''}">
+{#snippet thinking(body: string)}
+  <!-- Open while streaming so live reasoning is visible; collapsed once done. -->
+  <details class="group/think min-w-0" open={streaming}>
+    <summary
+      class="flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 text-[12px] text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden"
+    >
+      <span class="truncate">{thinkingTitle(body)}</span>
+      <span class="shrink-0 transition-transform group-open/think:rotate-90" aria-hidden="true">▸</span>
+    </summary>
+    <div class="mt-1.5 border-l-2 border-border/70 pl-3 text-[13px] text-muted-foreground">
+      <Markdown content={body} compact={true} />
+    </div>
+  </details>
+{/snippet}
+
+<div class="group/msg relative">
   {#if plugin?.Message}
     {@const Comp = plugin.Message}
     <Comp message={message} text={text} />
@@ -224,6 +215,7 @@
     <Message class="justify-start">
       <ToolCallCard
         name={typeof message.toolName === "string" ? message.toolName : "tool"}
+        meta={toolDuration(message)}
         result={text || "—"}
         status={message.isError ? "error" : "done"}
       />
@@ -337,8 +329,15 @@
               if (e.key === "Enter" || e.key === " ") editUser(e);
             }}
           >
-            {#if !stuck}
-              <div class="absolute right-2 top-0 z-10 flex -translate-y-1/2 gap-1 rounded-full border border-border/70 bg-[var(--pi-canvas)] px-1 shadow-sm">
+            <MessageContent
+              variant="card"
+              class="w-full max-w-full border-border/80"
+              content={text || (typeof message.content === "string" ? message.content : "")}
+            />
+            <!-- Desktop: floats on the top edge, shown on hover. Touch: a quiet row under the message. -->
+            <div
+              class="flex gap-1 pointer-fine:absolute pointer-fine:right-2 pointer-fine:top-0 pointer-fine:z-10 pointer-fine:-translate-y-1/2 pointer-fine:rounded-full pointer-fine:border pointer-fine:border-border/70 pointer-fine:bg-[var(--pi-canvas)] pointer-fine:px-1 pointer-fine:opacity-0 pointer-fine:shadow-sm pointer-fine:transition-opacity pointer-fine:group-hover/msg:opacity-100 pointer-fine:focus-within:opacity-100 pointer-coarse:mt-0.5 pointer-coarse:justify-end"
+            >
                 <Button
                   variant="ghost"
                   size="icon"
@@ -353,35 +352,19 @@
                     <Copy class="size-3.5 text-muted-foreground" />
                   {/if}
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  class="size-7 text-muted-foreground"
-                  title="Fork from here"
-                  onclick={forkMessage}
-                >
-                  <GitFork class="size-3.5 text-muted-foreground" />
-                </Button>
-              </div>
-            {/if}
-            {#if sticky && stuck}
-              <!-- Pinned to the top: a two-line summary, not the whole prompt. -->
-              <div
-                class="pinned-preview w-full max-w-full rounded-xl border border-border/80 bg-card px-4 py-3 text-sm"
-                title={text}
-              >
-                {previewText}
-              </div>
-            {:else}
-              <div class="{sticky ? 'max-h-[40vh] overflow-y-auto' : ''}">
-                <MessageContent
-                  variant="card"
-                  class="w-full max-w-full border-border/80"
-                  content={text || (typeof message.content === "string" ? message.content : "")}
-                />
-              </div>
-            {/if}
+                {#if onForkUser}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    class="size-7 text-muted-foreground"
+                    title="Fork from here"
+                    onclick={forkMessage}
+                  >
+                    <GitFork class="size-3.5 text-muted-foreground" />
+                  </Button>
+                {/if}
+            </div>
           </div>
         {/if}
       </div>
@@ -389,49 +372,29 @@
   {:else if isAssistant}
     <Message class="justify-start">
       <div class="relative min-w-0 w-full max-w-full">
-        {#if showAssistantCopy}
-          <div
-            class="absolute right-0 top-0 z-10 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100"
-          >
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              class="size-7"
-              title="Copy response"
-              aria-label="Copy assistant response"
-              onclick={copyMessage}
-            >
-              {#if copied}
-                <Check class="size-3.5 text-muted-foreground" />
-              {:else}
-                <Copy class="size-3.5 text-muted-foreground" />
-              {/if}
-            </Button>
-          </div>
-        {/if}
-        <div class="flex min-w-0 w-full flex-col gap-2 {showAssistantCopy ? 'pr-8' : ''}">
+        <div class="flex min-w-0 w-full flex-col gap-2">
           {#if orphanThinking && assistantMode !== "final-only"}
-            <div class="min-w-0 text-muted-foreground">
-              <Markdown content={orphanThinking} compact={true} />
-            </div>
+            {@render thinking(orphanThinking)}
           {/if}
 
           {#each parts as p, i (`${p.type}-${p.id ?? p.name ?? i}`)}
             {#if isThinkPart(p) && assistantMode !== "final-only"}
               {@const body = partThinkingText(p)}
               {#if body.trim()}
-                <div class="min-w-0 text-muted-foreground">
-                  <Markdown content={body} compact={true} />
-                </div>
+                {@render thinking(body)}
               {/if}
             {:else if (p.type === "toolCall" || p.type === "tool_use") && assistantMode !== "final-only"}
               {@const resultMessage = pairedResultMessage(p)}
               {@const resultText = resultMessage ? toolResultText(resultMessage) : ""}
               {@const builtin = builtinToolPresentation(p, resultMessage, resultText)}
+              {@const nested = nestedCallSummary(resultMessage)}
               <ToolCallCard
-                name={builtin?.title ?? p.name ?? "tool"}
-                meta={builtin?.meta ?? ""}
+                name={builtin?.title ??
+                  (nested
+                    ? `${p.name ?? "tool"} → ${nested}`
+                    : genericToolTitle(p.name ?? "tool", p.arguments ?? p.input))}
+                meta={builtin?.meta ?? toolDuration(resultMessage)}
+                startedAt={toolStartedAt(message)}
                 args={builtin?.args ?? toolArgs(p)}
                 argsLabel={builtin?.argsLabel ?? "args"}
                 argsLang={builtin?.argsKind
@@ -487,6 +450,28 @@
             </div>
           {/if}
         </div>
+        {#if showAssistantCopy}
+          <!-- Under the answer so the text keeps the full width; hover-revealed on desktop, always visible on touch. -->
+          <div
+            class="mt-1 flex focus-within:opacity-100 pointer-fine:opacity-0 pointer-fine:transition-opacity pointer-fine:group-hover/msg:opacity-100"
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              type="button"
+              class="size-7"
+              title="Copy response"
+              aria-label="Copy assistant response"
+              onclick={copyMessage}
+            >
+              {#if copied}
+                <Check class="size-3.5 text-muted-foreground" />
+              {:else}
+                <Copy class="size-3.5 text-muted-foreground" />
+              {/if}
+            </Button>
+          </div>
+        {/if}
       </div>
     </Message>
   {:else}
@@ -498,13 +483,3 @@
   {/if}
 </div>
 
-<style>
-  /* Two lines keeps the pinned prompt readable without eating the viewport. */
-  .pinned-preview {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-  }
-</style>

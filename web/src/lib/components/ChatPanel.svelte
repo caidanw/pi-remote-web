@@ -47,7 +47,6 @@
     isComposerCommand,
     isFinalAssistantResponse,
     messageTimestamp,
-    showStandaloneWorking,
     startsTopLevelTurn,
     workSectionOpen,
   } from "$lib/work-section";
@@ -220,17 +219,20 @@
   /** Follow tail unless user scrolls up (reactive for jump button) */
   let stickBottom = $state(true);
   let progScroll = false;
-  /** Long sessions: only paint a tail until user expands. */
-  const MSG_WINDOW = 120;
-  /** Transcript bytes fetched up front; older turns page in on demand. */
+  /** Transcript fetched up front; older messages page in on demand. */
   const FETCH_WINDOW = 120;
   const FETCH_PAGE = 200;
+  /** Messages revealed per scroll-to-top, so history unrolls gradually. */
+  const REVEAL_STEP = 10;
   let fetchLimit = $state(FETCH_WINDOW);
   let hasOlderHistory = $state(false);
+  /** Absolute transcript index of messages[0] (server window start). */
+  let pageStart = $state(0);
+  /** Absolute index of the first rendered message; -1 renders everything loaded. */
+  let visibleStart = $state(-1);
   let loadingOlder = $state(false);
   /** First transcript paint for a session; keeps a slow open from looking dead. */
   let loadingTranscript = $state(false);
-  let showAllMsgs = $state(false);
 
   /** Prefill from last session; overwritten when a live session loads. */
   let model = $state<SessionRow["model"]>(readLastModel());
@@ -410,10 +412,9 @@
   });
   /** Prefer local (live) model; fall back to session prop so picker never blanks. */
   const activeModel = $derived(model ?? session?.model);
+  // Absolute indexes, so a fetch that prepends older messages never shifts what's on screen.
   const hiddenMsgCount = $derived(
-    showAllMsgs || messages.length <= MSG_WINDOW
-      ? 0
-      : messages.length - MSG_WINDOW,
+    visibleStart < 0 ? 0 : Math.min(messages.length, Math.max(0, visibleStart - pageStart)),
   );
 
   function onComposerDragOver(e: DragEvent) {
@@ -432,16 +433,32 @@
     if (scroller.scrollTop < 400) void loadOlder();
   }
 
-  /** Widen the server window; the scroll anchor is kept by pinning scrollHeight. */
+  /**
+   * Reveal REVEAL_STEP older messages; fetch another page only when the loaded
+   * ones run out. The scroll anchor is kept by pinning scrollHeight.
+   */
   async function loadOlder() {
     const id = wiredId;
-    if (!id || loadingOlder || !hasOlderHistory) return;
+    if (!id || loadingOlder) return;
+    if (hiddenMsgCount === 0 && !hasOlderHistory) return;
     loadingOlder = true;
-    const anchor = scroller ? scroller.scrollHeight - scroller.scrollTop : 0;
-    fetchLimit += FETCH_PAGE;
+    const startHeight = scroller?.scrollHeight ?? 0;
+    const anchor = scroller ? startHeight - scroller.scrollTop : 0;
     try {
-      await load(id, { force: true, quiet: true });
-      await tick();
+      // Revealed messages can land inside a collapsed work section and add no
+      // height; keep stepping until something visible appears (bounded).
+      for (let step = 0; step < 30; step++) {
+        if (hiddenMsgCount === 0) {
+          if (!hasOlderHistory || wiredId !== id) break;
+          // Pin the current top first so the fetched page arrives hidden.
+          visibleStart = pageStart;
+          fetchLimit += FETCH_PAGE;
+          await load(id, { force: true, quiet: true });
+        }
+        visibleStart = Math.max(pageStart, visibleStart - REVEAL_STEP);
+        await tick();
+        if (!scroller || scroller.scrollHeight > startHeight) break;
+      }
       if (scroller) {
         progScroll = true;
         scroller.scrollTop = scroller.scrollHeight - anchor;
@@ -782,7 +799,7 @@
   let turnHadError = false;
   /** Server reported streaming this turn — idle then means settle (SSE may have been missed). */
   let sawServerStreaming = false;
-  let lastPromptAt = 0;
+  let lastPromptAt = $state(0);
   let workDurations = $state<Record<string, number>>({});
   let workSectionPreferences = $state<Record<string, boolean>>({});
 
@@ -853,6 +870,7 @@
       const m = page.messages;
       if (wiredId !== id) return;
       hasOlderHistory = Boolean(page.hasMore);
+      pageStart = page.start ?? 0;
       const effects = stream.commitSnapshot(m, info.seq);
       bashRunning = Boolean(row.isBashRunning);
       stream.noteServerBusy(Boolean(row.streaming));
@@ -960,6 +978,7 @@
       const m = page.messages;
       if (wiredId !== id) return;
       hasOlderHistory = Boolean(page.hasMore);
+      pageStart = page.start ?? 0;
       if (stream.isSnapshotting && !opts?.force) return;
       stream.reconcileFromServer(m, { force: opts?.force });
       paintMessages(false);
@@ -1067,7 +1086,7 @@
         lastPromptAt = 0;
         streaming = false;
         bashRunning = false;
-        showAllMsgs = false;
+        visibleStart = -1;
         failedPrompt = null;
         attachments = [];
         editing = null;
@@ -1100,7 +1119,7 @@
       if (pending) draft = pending;
       wiredId = id;
       dropPending();
-      showAllMsgs = false;
+      visibleStart = -1;
       fetchLimit = FETCH_WINDOW;
       hasOlderHistory = false;
       failedPrompt = null;
@@ -1599,11 +1618,10 @@
   });
 
   /**
-   * Group into turns (user → until next user) so each user prompt can stick
+   * Group into turns (user → until next user) so each prompt owns its work section
    * while that turn's assistant/tool output scrolls.
    */
   const messageTurns = $derived.by(() => {
-    void workTick;
     const slice = messages.slice(hiddenMsgCount);
     type Item = { m: ChatMsg; i: number };
     type RawTurn = { startIndex: number; items: Item[] };
@@ -1641,22 +1659,18 @@
       const start = messageTimestamp(userItems[0]?.m ?? turn.items[0]?.m);
       const end = finalItem
         ? messageTimestamp(finalItem.m)
-        : active
-          ? Date.now()
-          : messageTimestamp(turn.items[turn.items.length - 1]?.m);
+        : messageTimestamp(turn.items[turn.items.length - 1]?.m);
       const turnKey = userItems[0]
         ? messageKey(userItems[0].m, userItems[0].i)
         : "";
       const storedDuration = turnKey ? workDurations[turnKey] : undefined;
       const timestampDuration =
         start !== null && end !== null && end >= start ? end - start : null;
-      const durationMs =
-        storedDuration ??
-        (active && lastPromptAt > 0 ? Date.now() - lastPromptAt : timestampDuration);
+      const durationMs = storedDuration ?? timestampDuration;
       const duration =
-        durationMs !== null && (active || durationMs >= 1000)
-          ? formatWorkDuration(durationMs)
-          : "";
+        durationMs !== null && durationMs >= 1000 ? formatWorkDuration(durationMs) : "";
+      // The live "Working for" clock ticks in the template, so this list isn't rebuilt every second.
+      const liveSince = active ? (lastPromptAt > 0 ? lastPromptAt : start) : null;
       return {
         ...turn,
         workKey: turnKey || messageKey(turn.items[0]!.m, turn.startIndex),
@@ -1665,14 +1679,11 @@
         workItems,
         finalItem,
         completed: !active,
+        liveSince,
         workLabel: `${active ? "Working" : "Worked"}${duration ? ` for ${duration}` : ""}`,
       };
     });
   });
-
-  const hasActiveWorkSection = $derived(
-    messageTurns.some((turn) => !turn.completed && turn.workItems.length > 0),
-  );
 
   const promptBoxClass = $derived(
     `border-black/[0.08] bg-white shadow-sm dark:border-white/10 dark:bg-zinc-900 ${
@@ -1835,7 +1846,8 @@
               Loading conversation…
             </div>
           {/if}
-          {#if hasOlderHistory}
+          {#if hasOlderHistory || hiddenMsgCount > 0}
+            <!-- Scrolling to the top does this automatically; the button is the accessible fallback. -->
             <button
               type="button"
               class="mx-auto rounded-full border border-border/70 bg-background/80 px-3 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -1843,15 +1855,6 @@
               onclick={() => void loadOlder()}
             >
               {loadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
-            </button>
-          {/if}
-          {#if hiddenMsgCount > 0}
-            <button
-              type="button"
-              class="mx-auto rounded-full border border-border/70 bg-background/80 px-3 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-              onclick={() => (showAllMsgs = true)}
-            >
-              Show earlier {hiddenMsgCount} messages
             </button>
           {/if}
           {#each messageTurns as turn (turn.startIndex)}
@@ -1899,9 +1902,8 @@
                     message={m}
                     messages={messages}
                     index={i}
-                    onEditUser={session?.remote ? undefined : () => editUserMessage(m, i)}
-                    onForkUser={session?.remote ? undefined : forkUserMessage}
-                    sticky={true}
+                    onEditUser={session?.remote || session?.readOnly ? undefined : () => editUserMessage(m, i)}
+                    onForkUser={session?.remote || session?.readOnly ? undefined : forkUserMessage}
                   />
                 {/if}
               {/each}
@@ -1926,7 +1928,11 @@
                     {#if !turn.completed}
                       <span class="size-1.5 animate-pulse rounded-full bg-amber-500" aria-hidden="true"></span>
                     {/if}
-                    <span>{turn.workLabel}</span>
+                    <span>
+                      {turn.liveSince === null
+                        ? turn.workLabel
+                        : (void workTick, `Working for ${formatWorkDuration(Date.now() - turn.liveSince)}`)}
+                    </span>
                     <ChevronDown
                       class="size-3.5 -rotate-90 transition-transform group-open/work:rotate-0"
                     />
@@ -1991,8 +1997,8 @@
               <span bind:this={spinEl} class="font-mono text-primary" aria-hidden="true">⠋</span>
               <span>bash</span>
             </div>
-          {:else if showStandaloneWorking(busy, sending, hasActiveWorkSection)}
-            <!-- A turn can be accepted before its first assistant message arrives. -->
+          {:else if busy || sending}
+            <!-- Always anchored at the bottom, even when the work section above is collapsed or scrolled away. -->
             <div
               class="flex items-center gap-1.5 px-0.5 text-xs text-muted-foreground"
               role="status"
@@ -2003,6 +2009,9 @@
                 aria-hidden="true"
               ></span>
               <span>Working…</span>
+              {#if lastPromptAt > 0}
+                <span class="tabular-nums">{(void workTick, formatWorkDuration(Date.now() - lastPromptAt))}</span>
+              {/if}
             </div>
           {/if}
           {#if error}

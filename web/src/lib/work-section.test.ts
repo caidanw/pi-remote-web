@@ -7,7 +7,6 @@ import {
   isComposerCommand,
   isFinalAssistantResponse,
   messageTimestamp,
-  showStandaloneWorking,
   startsTopLevelTurn,
   workSectionOpen,
 } from "./work-section.ts";
@@ -55,14 +54,11 @@ describe("work section helpers", () => {
     assert.equal(isFinalAssistantResponse(streamingToolStep), false);
   });
 
-  it("preserves a user's work-section toggle and avoids duplicate progress", () => {
+  it("preserves a user's work-section toggle", () => {
     assert.equal(workSectionOpen(undefined, false), true);
     assert.equal(workSectionOpen(undefined, true), false);
     assert.equal(workSectionOpen(true, true), true);
     assert.equal(workSectionOpen(false, false), false);
-    assert.equal(showStandaloneWorking(true, false, true), false);
-    assert.equal(showStandaloneWorking(true, false, false), true);
-    assert.equal(showStandaloneWorking(false, true, false), true);
   });
 
   it("formats stored timestamps and elapsed work time", () => {

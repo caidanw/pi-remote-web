@@ -68,14 +68,6 @@ export function workSectionOpen(preference: boolean | undefined, completed: bool
   return preference ?? !completed;
 }
 
-export function showStandaloneWorking(
-  busy: boolean,
-  sending: boolean,
-  hasActiveWorkSection: boolean,
-): boolean {
-  return (busy || sending) && !hasActiveWorkSection;
-}
-
 export function formatWorkDuration(milliseconds: number): string {
   const seconds = Math.max(0, Math.round(milliseconds / 1000));
   if (seconds < 60) return `${seconds}s`;

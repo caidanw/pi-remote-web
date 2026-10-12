@@ -2,6 +2,7 @@
   /** Collapsible tool call / result row for chat. */
   import HighlightedPre from "$lib/components/HighlightedPre.svelte";
   import LinkifiedPre from "$lib/components/LinkifiedPre.svelte";
+  import { formatWorkDuration } from "$lib/work-section";
 
   type Status = "running" | "done" | "error";
 
@@ -18,6 +19,8 @@
     argsLabel?: string;
     resultLang?: string;
     resultLabel?: string;
+    /** Epoch ms the call began; while running, elapsed time shows before `meta`. */
+    startedAt?: number;
   };
 
   let {
@@ -31,16 +34,33 @@
     argsLabel = "args",
     resultLang = "",
     resultLabel = "result",
+    startedAt,
   }: Props = $props();
+
+  // Fallback when the start is unknown: when this card first showed the call.
+  const mountedAt = Date.now();
+  let now = $state(Date.now());
+  $effect(() => {
+    if (status !== "running") return;
+    now = Date.now();
+    const timer = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(timer);
+  });
+  const metaLabel = $derived(
+    status === "running"
+      ? [formatWorkDuration(now - (startedAt ?? mountedAt)), meta].filter(Boolean).join(" \u00b7 ")
+      : meta,
+  );
 
   let localOpen = $state(false);
 
+  // "done" is the common case; the green dot says it, so only flag the exceptions.
   const chip = $derived(
     status === "running"
       ? { label: "running", class: "bg-amber-500/15 text-amber-700 dark:text-amber-400" }
       : status === "error"
         ? { label: "error", class: "bg-destructive/15 text-destructive" }
-        : { label: "done", class: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
+        : null,
   );
 
   const hasBody = $derived(Boolean(args.trim() || result.trim()));
@@ -74,16 +94,18 @@
       aria-hidden="true"
     ></span>
     <span class="min-w-0 flex-1 truncate font-mono text-[11.5px] text-foreground/90">{name}</span>
-    {#if meta}
+    {#if metaLabel}
       <span
-        class="shrink-0 rounded bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-      >{meta}</span>
+        class="shrink-0 rounded bg-background/70 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
+      >{metaLabel}</span>
     {/if}
-    <span
-      class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide {chip.class}"
-    >
-      {chip.label}
-    </span>
+    {#if chip}
+      <span
+        class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide {chip.class}"
+      >
+        {chip.label}
+      </span>
+    {/if}
     {#if hasBody}
       <span
         class="shrink-0 text-muted-foreground transition-transform group-open/tool:rotate-90"

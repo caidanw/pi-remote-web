@@ -3,21 +3,59 @@ import assert from "node:assert/strict";
 import {
   bashOutputPresentation,
   builtinToolPresentation,
+  genericToolTitle,
+  nestedCallSummary,
+  toolDuration,
+  toolStartedAt,
 } from "./tool-presentation.ts";
 
+describe("tool timing and nested calls", () => {
+  it("formats durations and summarizes codemode inner calls", () => {
+    assert.equal(toolDuration({ role: "toolResult", durationMs: 340 }), "0.3s");
+    assert.equal(toolDuration({ role: "toolResult" }), "");
+    const result = {
+      role: "toolResult",
+      nestedCalls: { calls: [{ name: "read" }, { name: "bash" }, { name: "read" }] },
+    };
+    assert.equal(nestedCallSummary(result), "read \u00d72, bash");
+    assert.equal(nestedCallSummary({ role: "toolResult" }), "");
+    assert.equal(toolStartedAt({ role: "assistant", timestamp: 1_000, durationMs: 250 }), 1_250);
+    assert.equal(toolStartedAt({ role: "assistant", timestamp: 1_000 }), undefined);
+  });
+
+  it("titles generic tools from short argument values, skipping opaque ids", () => {
+    assert.equal(
+      genericToolTitle("todo", { action: "update", id: 3, status: "completed" }),
+      "todo update 3 completed",
+    );
+    assert.equal(genericToolTitle("mcp__linear__get_issue", { id: "DEV-620" }), "linear \u00b7 get_issue DEV-620");
+    assert.equal(
+      genericToolTitle("act_ui", { stateId: "fef3a211-9893-46df-85db-9c332fe26559", ok: true }),
+      "act_ui",
+    );
+    assert.equal(genericToolTitle("x", { q: "a".repeat(70) }), `x ${"a".repeat(60)}\u2026`);
+  });
+});
+
 describe("builtinToolPresentation", () => {
-  it("renders bash as a command with compact timeout metadata", () => {
+  it("shows bash's timeout while running and its duration once done", () => {
+    const call = {
+      type: "toolCall",
+      name: "bash",
+      arguments: { command: "npm test", timeout: 120 },
+    };
+    assert.equal(builtinToolPresentation(call, undefined, "")?.meta, "timeout 120s");
+    assert.equal(
+      builtinToolPresentation(call, { role: "toolResult" }, "")?.meta,
+      undefined,
+    );
     const view = builtinToolPresentation(
-      {
-        type: "toolCall",
-        name: "bash",
-        arguments: { command: "npm test", timeout: 120 },
-      },
-      { role: "toolResult" },
+      call,
+      { role: "toolResult", durationMs: 83_000 },
       "42 tests passed",
     );
     assert.equal(view?.title, "$ npm test");
-    assert.equal(view?.meta, "timeout 120s");
+    assert.equal(view?.meta, "1m 23s");
     assert.equal(view?.args, "");
     assert.equal(view?.resultLabel, "output");
     assert.equal(view?.result, "42 tests passed");

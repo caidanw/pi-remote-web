@@ -1,4 +1,5 @@
 import type { ChatMessage, ContentPart } from "./api.ts";
+import { formatWorkDuration, messageTimestamp } from "./work-section.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -63,6 +64,53 @@ function readTitle(path: string, args: JsonObject): string {
   return `read ${path}:${start}${end}`.trim();
 }
 
+/** How long a finished tool took, from pi's `toolResult.durationMs`; "" when unknown. */
+export function toolDuration(result: ChatMessage | undefined): string {
+  const ms = result?.durationMs;
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  return ms < 1000 ? `${(ms / 1000).toFixed(1)}s` : formatWorkDuration(ms);
+}
+
+/** When an assistant message's tool calls began: once the model finished streaming it. */
+export function toolStartedAt(assistant: ChatMessage): number | undefined {
+  const start = messageTimestamp(assistant);
+  const ms = assistant.durationMs;
+  return start !== null && typeof ms === "number" && Number.isFinite(ms) ? start + ms : undefined;
+}
+
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f-]{20,}$/i;
+
+/**
+ * One-line title for tools without a dedicated renderer: readable name plus
+ * the first few short argument values, e.g. "todo update 3 completed" or
+ * "linear \u00b7 get_issue DEV-620". Opaque ids are skipped.
+ */
+export function genericToolTitle(name: string, args: unknown): string {
+  const label = name.startsWith("mcp__") ? name.slice(5).split("__").join(" \u00b7 ") : name;
+  const values: string[] = [];
+  for (const value of Object.values(object(args) ?? {})) {
+    if (values.length === 3) break;
+    if (typeof value === "number" && Number.isFinite(value)) values.push(String(value));
+    else if (typeof value === "string") {
+      const text = value.replace(/\s+/g, " ").trim();
+      if (text && !UUID_LIKE.test(text)) values.push(text.length > 60 ? `${text.slice(0, 60)}\u2026` : text);
+    }
+  }
+  return [label, ...values].join(" ");
+}
+
+/** Inner tool calls made by codemode-style tools, e.g. "read ×2, bash". */
+export function nestedCallSummary(result: ChatMessage | undefined): string {
+  const calls = object(result?.nestedCalls)?.calls;
+  if (!Array.isArray(calls)) return "";
+  const counts = new Map<string, number>();
+  for (const call of calls) {
+    const name = object(call)?.name;
+    if (typeof name === "string") counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(", ");
+}
+
 /** Keep standalone bash messages and tool-call bash results visually identical. */
 export function bashOutputPresentation(command: string): BashOutputPresentation {
   const gitDiff = command.split(/&&|\|\||;|\n/).some((segment) => {
@@ -100,7 +148,10 @@ export function builtinToolPresentation(
     return {
       title: `$ ${command}`,
       path: "",
-      meta: timeout === undefined ? undefined : `timeout ${timeout}s`,
+      // Finished: how long it took. Running: the limit it may hit.
+      meta: pairedResult
+        ? toolDuration(pairedResult) || undefined
+        : timeout === undefined ? undefined : `timeout ${timeout}s`,
       args: "",
       argsLabel: "args",
       result: resultText,
