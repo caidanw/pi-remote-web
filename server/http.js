@@ -816,6 +816,36 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth, push)
       }
     }
 
+    // GET /api/sessions/changes : SSE ping whenever the session list changes
+    // (terminal registered/left/switched, browser session opened/closed), so
+    // the sidebar refetches instead of waiting for its poll.
+    if (method === "GET" && pathname === "/api/sessions/changes") {
+      req.socket?.setTimeout(0);
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-store, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      res.write(": connected\n\n");
+      /** @type {ReturnType<typeof setTimeout> | undefined} */
+      let pending;
+      const changed = () => {
+        pending ??= setTimeout(() => {
+          pending = undefined;
+          res.write("event: changed\ndata: {}\n\n");
+        }, 250);
+      };
+      const unsubscribe = [remoteBroker?.subscribe?.(changed), workers?.subscribeChanges?.(changed)].filter(Boolean);
+      const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
+      req.on("close", () => {
+        for (const off of unsubscribe) off?.();
+        clearInterval(ping);
+        clearTimeout(pending);
+      });
+      return;
+    }
+
     // GET /api/sessions?cwd=
     if (method === "GET" && pathname === "/api/sessions") {
       const cwd = searchParams.get("cwd") || undefined;

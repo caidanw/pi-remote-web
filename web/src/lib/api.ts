@@ -810,6 +810,13 @@ export type SseFrameMeta = { seq: number; lastEventId: string };
  * Pass `after` (last applied seq) so server can ring-replay or signal snapshot.
  * Returns close().
  */
+/** Calls `onChange` whenever the server's session list changes. EventSource reconnects on its own. */
+export function subscribeSessionChanges(onChange: () => void) {
+  const es = new EventSource("/api/sessions/changes");
+  es.addEventListener("changed", () => onChange());
+  return () => es.close();
+}
+
 export function subscribeEvents(
   id: string,
   onEvent: (ev: unknown, meta: SseFrameMeta) => void,

@@ -3,6 +3,7 @@
   import {
     listSessions,
     openSession,
+    subscribeSessionChanges,
     closeSession,
     releaseSession,
     patchSession,
@@ -815,6 +816,21 @@
       clearInterval(t);
       window.removeEventListener("popstate", onPop);
       window.removeEventListener("pi-remote-web:auth-required", onAuthRequired);
+    };
+  });
+
+  // Live session list: the server pings on every change. Returning to the app
+  // also refreshes, since a suspended phone can miss pings while asleep.
+  $effect(() => {
+    if (!authReady || authRequired) return;
+    const unsubscribe = subscribeSessionChanges(() => void refresh());
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
     };
   });
 </script>

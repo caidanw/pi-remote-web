@@ -94,9 +94,23 @@ export class RpcWorkerManager {
     this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
     /** @type {Map<string, any>} */
     this.workers = new Map();
+    /** Listeners for "the browser-session list changed" (added, removed, exited). */
+    /** @type {Set<() => void>} */
+    this.changeListeners = new Set();
     /** @type {Map<string, Promise<unknown>>} */
     this.pathTails = new Map();
     this.closing = false;
+  }
+
+  /** Session-list changes; distinct from subscribe(id, listener), which streams one session. */
+  /** @param {() => void} listener */
+  subscribeChanges(listener) {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
+  }
+
+  #changed() {
+    for (const listener of this.changeListeners) listener();
   }
 
   hasSession(id) {
@@ -141,6 +155,7 @@ export class RpcWorkerManager {
       if (existing) {
         await this.#stop(existing);
         this.workers.delete(existing.id);
+        this.#changed();
       }
 
       const runtimeId = `browser-${randomUUID()}`;
@@ -180,6 +195,7 @@ export class RpcWorkerManager {
           (data) => data.messages ?? [],
         );
         this.workers.set(worker.id, worker);
+        this.#changed();
         return this.#row(worker);
       } catch (error) {
         if (worker) await this.#stop(worker);
@@ -395,6 +411,7 @@ export class RpcWorkerManager {
       if (worker.lock) await releaseSessionLock(worker.lock);
       if (worker.lockRelease) await worker.lockRelease;
       this.workers.delete(worker.id);
+      this.#changed();
       return { ok: true, path: worker.path };
     }
     worker.releasing = true;
@@ -413,6 +430,7 @@ export class RpcWorkerManager {
       }
       await this.#stop(worker);
       this.workers.delete(worker.id);
+      this.#changed();
       return { ok: true, path: worker.path };
     }
     if (busyState(worker.state, worker.bashRunning)) {
@@ -423,6 +441,7 @@ export class RpcWorkerManager {
     }
     await this.#stop(worker);
     this.workers.delete(worker.id);
+    this.#changed();
     return { ok: true, path: worker.path };
   }
 
@@ -686,6 +705,7 @@ export class RpcWorkerManager {
     }
     worker.requests.clear();
     this.#emit(worker, { type: "worker_exit", error: error.message });
+    this.#changed();
     const lock = worker.lock;
     worker.lock = null;
     if (lock) worker.lockRelease = releaseSessionLock(lock);
