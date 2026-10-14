@@ -172,8 +172,9 @@
 </script>
 
 {#snippet thinking(body: string)}
-  <!-- Open while streaming so live reasoning is visible; collapsed once done. -->
-  <details class="group/think min-w-0" open={streaming}>
+  <!-- Collapsed until the user opens it: auto-opening while streaming and closing at
+       the next step made the transcript jump on every step. -->
+  <details class="group/think min-w-0">
     <summary
       class="flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 text-[12px] text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden"
     >

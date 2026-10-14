@@ -1836,7 +1836,24 @@
   });
 
   /** What the agent is doing right now, for the bottom status line. */
-  const liveStep = $derived(busy ? liveActivity(messages) : "");
+  // Recomputed per streamed chunk, but a $derived only notifies when the text changes.
+  const stepCandidate = $derived(busy ? liveActivity(messages) : "");
+  /**
+   * What the status line shows: a step must hold for 300ms before it replaces
+   * the current one (so streaming tool arguments like "$ npm t…" don't churn
+   * the text), and the last real step stays up through the gaps between steps.
+   */
+  let liveStep = $state("");
+  $effect(() => {
+    const next = stepCandidate;
+    if (!busy) {
+      liveStep = "";
+      return;
+    }
+    if (!next || next === untrack(() => liveStep)) return;
+    const timer = setTimeout(() => (liveStep = next), 300);
+    return () => clearTimeout(timer);
+  });
 
   const promptBoxClass = $derived(
     `border-black/[0.08] bg-white shadow-sm dark:border-white/10 dark:bg-zinc-900 ${
