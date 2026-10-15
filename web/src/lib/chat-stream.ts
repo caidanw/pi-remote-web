@@ -175,11 +175,8 @@ export function needSnapshot(
 
 function mergeMsg(prev: ChatMessage, next: ChatMessage): ChatMessage {
   const skillName = typeof prev._skillName === "string" ? prev._skillName : undefined;
-  const merged = prev._key && !next._key
-    ? { ...next, _key: prev._key }
-    : next._key
-      ? next
-      : { ...next, _key: prev._key };
+  // A matched row already has a mounted identity. Incoming deltas must not replace it.
+  const merged = prev._key ? { ...next, _key: prev._key } : withKey(next);
   return skillName && typeof merged._skillName !== "string"
     ? { ...merged, _skillName: skillName }
     : merged;

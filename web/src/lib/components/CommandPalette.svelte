@@ -1703,15 +1703,19 @@ h3{margin:1.5rem 0 0.5rem;text-transform:capitalize}</style></head><body>
     ),
   );
 
+  const commandSessionId = $derived(session?.id);
+
   // Open (or re-open) palette. Boot is read untracked so clearing it
   // doesn't re-run and reset view back to commands mid-settings.
   $effect(() => {
     if (!open) return;
+    void commandSessionId;
     query = "";
     selectedIndex = 0;
     recentCommandIds = loadRecentCommands();
-    void loadSlashCommands();
     untrack(() => {
+      // Metadata refreshes replace session objects; only a session-id change should reset the palette.
+      void loadSlashCommands();
       const b = boot;
       if (b) {
         onBootConsumed?.();

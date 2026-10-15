@@ -995,10 +995,10 @@ export function messageKey(msg: ChatMessage, index: number): string {
   }
   if (typeof msg.id === "string" && msg.id) return msg.id;
   const ts = msg.timestamp != null ? String(msg.timestamp) : "";
-  const peek = messageText(msg).slice(0, 48);
-  // Timestamped messages keep their key when older history is prepended (index
-  // shifts); only untimed ones need the index. Collisions: see uniqueMessageKeys.
-  return ts ? `${msg.role}:${ts}:${peek}` : `${index}:${msg.role}::${peek}`;
+  // Content grows while streaming; putting it in the key remounts the row.
+  // Same-timestamp collisions are handled by uniqueMessageKeys.
+  if (ts) return `${msg.role}:${ts}`;
+  return `${index}:${msg.role}::${messageText(msg).slice(0, 48)}`;
 }
 
 export function clientMessageKey(): string {

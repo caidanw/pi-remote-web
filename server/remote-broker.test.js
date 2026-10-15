@@ -66,6 +66,43 @@ describe("remote broker", () => {
     assert.ok(sessions.every((row) => row.connected));
   });
 
+  it("keeps token and tool-progress traffic off the session-list subscription", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "prw-catalogue-"));
+    const socketPath = path.join(dir, "broker.sock");
+    const broker = new RemoteBroker({ socketPath });
+    const client = makeClient(socketPath, "terminal");
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => broker.close());
+    cleanup.push(async () => client.stop());
+    let changes = 0;
+    broker.subscribe(() => changes++);
+    await broker.listen();
+    client.start();
+    await waitFor(() => broker.listSessions()[0]?.snapshot);
+    assert.ok(changes >= 1, "registration still announces new sessions");
+    changes = 0;
+    let delivered = 0;
+    broker.subscribeSession("terminal", () => delivered++);
+    for (let i = 0; i < 40; i++) {
+      client.publish({ type: "message_update", message: { role: "assistant", timestamp: 1, content: [{ type: "text", text: String(i) }] } });
+      client.publish({ type: "tool_execution_update", toolCallId: "x", partialResult: {} });
+    }
+    await waitFor(() => delivered === 80);
+    assert.equal(changes, 0, "all deltas reach the transcript without refreshing the catalogue");
+    for (const event of [
+      { type: "agent_start" },
+      { type: "session_info_changed", name: "Renamed" },
+      { type: "model_select", model: { id: "m", provider: "p" } },
+      { type: "thinking_level_select", level: "high" },
+      { type: "agent_settled" },
+    ]) client.publish(event);
+    await waitFor(() => delivered === 85);
+    assert.equal(changes, 5);
+    client.stop();
+    await waitFor(() => !broker.listSessions()[0]?.connected);
+    assert.equal(changes, 6, "disconnects still announce catalogue changes");
+  });
+
   it("round-trips commands through the owning client", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-remote-"));
     const socketPath = path.join(dir, "broker.sock");

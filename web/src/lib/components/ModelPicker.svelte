@@ -15,6 +15,7 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from "svelte";
   import { formatModelLabel, listModels, setModel } from "$lib/api";
   import Button from "agentic-ui-kit/components/ui/button.svelte";
 
@@ -58,33 +59,34 @@
     return list;
   });
 
-  async function load(force = false) {
-    if (loading) return;
+  async function load(id: string) {
     // Don't reuse "full" unscoped cache for a session — scope may filter the list.
-    const key = sessionId ? `s:${sessionId}` : "home";
-    if (!force) {
-      const hit = cache.get(key);
-      if (hit?.length) {
-        models = hit;
-        return;
-      }
+    const key = id ? `s:${id}` : "home";
+    const hit = cache.get(key);
+    if (hit?.length) {
+      models = hit;
+      loading = false;
+      return;
     }
+    models = [];
     loading = true;
     try {
-      const res = await listModels(sessionId || undefined);
+      const res = await listModels(id || undefined);
+      if (sessionId !== id) return;
       models = res.models ?? [];
       if (models.length) cache.set(key, models);
       else cache.delete(key);
     } catch {
-      /* leave empty; retry when sessionId effect re-runs or parent remounts */
+      /* leave empty; retry when the session changes or the picker remounts */
     } finally {
-      loading = false;
+      if (sessionId === id) loading = false;
     }
   }
 
   $effect(() => {
-    void sessionId; // re-load when session appears
-    void load();
+    const id = sessionId;
+    // Loading/models are outputs, not triggers (an empty/error response otherwise retries forever).
+    untrack(() => void load(id));
   });
 
   async function onSelectChange(e: Event) {

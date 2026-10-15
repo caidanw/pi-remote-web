@@ -114,7 +114,7 @@
     {/if}
   </summary>
 
-  {#if hasBody}
+  {#if hasBody && localOpen}
     <div class="space-y-1.5 border-t border-border/50 px-2.5 py-2">
       {#if args.trim()}
         <div>

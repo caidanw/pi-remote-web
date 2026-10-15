@@ -131,6 +131,15 @@ describe("read-only commands", () => {
 });
 
 describe("stable message keys", () => {
+  it("keeps timestamped row keys stable while content grows or changes kind", () => {
+    const at = 1234;
+    const key = (content) => uniqueMessageKeys([{ role: "assistant", timestamp: at, content }])[0];
+    const original = key([]);
+    assert.equal(key([{ type: "text", text: "First chunk" }]), original);
+    assert.equal(key([{ type: "text", text: "First chunk and more" }]), original);
+    assert.equal(key([{ type: "toolCall", id: "t", name: "bash", arguments: { command: "npm test" } }]), original);
+  });
+
   it("survive prepended history and never collide", () => {
     const a = { role: "assistant", timestamp: 5, content: [{ type: "text", text: "hi" }] };
     const u = { role: "user", timestamp: 4, content: "go" };

@@ -60,6 +60,9 @@ function snapshotKey(frame) {
 }
 
 const DEFAULT_RECONNECT_GRACE_MS = 30_000;
+const CATALOGUE_EVENTS = new Set([
+  "agent_start", "agent_settled", "session_info_changed", "model_select", "thinking_level_select",
+]);
 
 export class RemoteBroker {
   /** @param {{ socketPath: string; reconnectGraceMs?: number; requestTakeover?: (sessionPath: string) => Promise<unknown> }} options */
@@ -431,6 +434,7 @@ export class RemoteBroker {
           truncated: Boolean(frame.truncated),
           droppedMessages: frame.droppedMessages,
         });
+        this.#notify();
       }
     }
     if (frame.type === "event") {
@@ -438,6 +442,8 @@ export class RemoteBroker {
       session.updatedAt = new Date().toISOString();
       this.#projectEvent(session, frame.event);
       this.#emit(session, frame.event);
+      // Token/tool deltas already have a per-session stream; they don't change the catalogue.
+      if (CATALOGUE_EVENTS.has(frame.event?.type)) this.#notify();
     }
     if (frame.type === "resync_required") {
       this.#emit(session, {
@@ -445,7 +451,6 @@ export class RemoteBroker {
         reason: frame.reason,
       });
     }
-    this.#notify();
   }
 
   #emit(session, event) {

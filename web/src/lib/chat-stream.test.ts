@@ -136,6 +136,37 @@ describe("ChatStream seq gate", () => {
 });
 
 describe("ChatStream message merge", () => {
+  it("preserves the mounted assistant key across start, deltas, and completion", () => {
+    for (const id of [undefined, "assistant-1"]) {
+      const stream = new ChatStream();
+      stream.bindSession("stable-keys");
+      stream.commitSnapshot([], 0);
+      const base = { role: "assistant", timestamp: 123, ...(id ? { id } : {}) };
+      stream.handleFrame(1, { type: "message_start", message: { ...base, content: [] } });
+      const key = stream.messages[0]._key;
+      assert.ok(key);
+      for (let seq = 2; seq < 30; seq++) {
+        stream.handleFrame(seq, { type: "message_update", message: { ...base, content: [{ type: "thinking", thinking: `chunk ${seq}` }] } });
+        assert.equal(stream.messages[0]._key, key, "stream updates must update, not remount, the row");
+      }
+      stream.handleFrame(30, { type: "message_end", message: { ...base, id: "final-id", content: [{ type: "text", text: "Done" }], stopReason: "stop" } });
+      assert.equal(stream.messages[0]._key, key, "learning a server ID must not remount the row");
+      assert.equal(stream.messages.length, 1);
+    }
+  });
+
+  it("keeps optimistic user and tool-result keys when their server rows are updated", () => {
+    const stream = new ChatStream();
+    stream.commitSnapshot([], 0);
+    stream.pushOptimisticUser("hello");
+    const userKey = stream.messages[0]._key;
+    stream.handleFrame(1, { type: "message_start", message: { role: "user", id: "u", content: "hello" } });
+    assert.equal(stream.messages[0]._key, userKey);
+    stream.handleFrame(2, { type: "message_start", message: { role: "toolResult", toolCallId: "t", content: [] } });
+    const toolKey = stream.messages[1]._key;
+    stream.handleFrame(3, { type: "message_end", message: { role: "toolResult", toolCallId: "t", content: [{ type: "text", text: "result" }] } });
+    assert.equal(stream.messages[1]._key, toolKey);
+  });
   it("replaces optimistic user on message_start", () => {
     const s = new ChatStream();
     s.bindSession("s3");

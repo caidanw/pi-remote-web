@@ -133,9 +133,10 @@
   let booting = $state(true);
   let releasing = $state(false);
 
+  const customizationCwd = $derived(selected?.cwd);
   $effect(() => {
     if (!authReady || authRequired) return;
-    void loadAndApplyCustomization(selected?.cwd).catch(() => {});
+    void loadAndApplyCustomization(customizationCwd).catch(() => {});
   });
   /** Apply /sessions/:id once after first list load */
   let routedOnce = false;

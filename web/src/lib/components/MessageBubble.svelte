@@ -24,6 +24,7 @@
   } from "$lib/tool-presentation";
   import SpecialMessageCard from "$lib/components/SpecialMessageCard.svelte";
   import ToolCallCard from "$lib/components/ToolCallCard.svelte";
+  import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
   import { langFromPath } from "agentic-ui-kit/components/prompt-kit/md-highlighter";
   import Markdown from "agentic-ui-kit/components/prompt-kit/markdown.svelte";
   import Message from "agentic-ui-kit/components/prompt-kit/message.svelte";
@@ -83,12 +84,6 @@
 
   function isThinkPart(p: ContentPart | undefined): boolean {
     return p?.type === "thinking" || p?.type === "reasoning";
-  }
-
-  /** Reasoning summaries usually open with a **bold title**; use it as the collapsed label. */
-  function thinkingTitle(body: string): string {
-    const bold = body.match(/^\s*\*\*(.+?)\*\*/);
-    return bold?.[1]?.trim() || "Thinking";
   }
 
   function partThinkingText(p: ContentPart): string {
@@ -170,22 +165,6 @@
     onEditUser?.(message);
   }
 </script>
-
-{#snippet thinking(body: string)}
-  <!-- Collapsed until the user opens it: auto-opening while streaming and closing at
-       the next step made the transcript jump on every step. -->
-  <details class="group/think min-w-0">
-    <summary
-      class="flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 text-[12px] text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden"
-    >
-      <span class="truncate">{thinkingTitle(body)}</span>
-      <span class="shrink-0 transition-transform group-open/think:rotate-90" aria-hidden="true">▸</span>
-    </summary>
-    <div class="mt-1.5 border-l-2 border-border/70 pl-3 text-[13px] text-muted-foreground">
-      <Markdown content={body} compact={true} />
-    </div>
-  </details>
-{/snippet}
 
 <!-- data-anchor: stable key ChatPanel uses to hold scroll position while loading history. -->
 <div class="group/msg relative" data-anchor={`${message.role}:${message.timestamp ?? index}`}>
@@ -373,14 +352,14 @@
       <div class="relative min-w-0 w-full max-w-full">
         <div class="flex min-w-0 w-full flex-col gap-2">
           {#if orphanThinking && assistantMode !== "final-only"}
-            {@render thinking(orphanThinking)}
+            <ThinkingBlock body={orphanThinking} />
           {/if}
 
           {#each parts as p, i (`${p.type}-${p.id ?? p.name ?? i}`)}
             {#if isThinkPart(p) && assistantMode !== "final-only"}
               {@const body = partThinkingText(p)}
               {#if body.trim()}
-                {@render thinking(body)}
+                <ThinkingBlock {body} />
               {/if}
             {:else if (p.type === "toolCall" || p.type === "tool_use") && assistantMode !== "final-only"}
               {@const resultMessage = pairedResultMessage(p)}
