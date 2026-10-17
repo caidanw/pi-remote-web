@@ -53,6 +53,9 @@ function handle(command) {
     case "get_messages":
       response(command, { messages });
       break;
+    case "get_session_stats":
+      response(command, { contextUsage: { tokens: messages.length * 1000, contextWindow: 10_000, percent: messages.length * 10 } });
+      break;
     case "prompt": {
       if (auditFile) appendFileSync(auditFile, `${command.message}\n`);
       const finish = () => {

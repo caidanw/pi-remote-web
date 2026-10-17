@@ -194,6 +194,7 @@ export class RpcWorkerManager {
         worker.messages = await this.#request(worker, { type: "get_messages" }).then(
           (data) => data.messages ?? [],
         );
+        await this.#refreshUsage(worker);
         this.workers.set(worker.id, worker);
         this.#changed();
         return this.#row(worker);
@@ -576,6 +577,7 @@ export class RpcWorkerManager {
     if (event.type === "agent_settled") {
       worker.state.isStreaming = false;
       void this.#refreshMessages(worker);
+      void this.#refreshUsage(worker).then(() => this.#changed());
       // Only turns seen starting here notify; a reattach to an idle session stays quiet.
       if (worker.turnStartedAt) {
         this.onTurnEnd?.({
@@ -679,6 +681,17 @@ export class RpcWorkerManager {
     worker.state = await this.#request(worker, { type: "get_state" });
   }
 
+  /** get_state has no context usage; get_session_stats does. */
+  async #refreshUsage(worker) {
+    if (!worker.running) return;
+    try {
+      const stats = await this.#request(worker, { type: "get_session_stats" });
+      worker.contextUsage = stats?.contextUsage;
+    } catch {
+      /* optional header metric; older Pi or a closing worker */
+    }
+  }
+
   async #refreshMessages(worker) {
     if (!worker.running) return;
     try {
@@ -754,6 +767,7 @@ export class RpcWorkerManager {
       sessionName: state.sessionName,
       thinkingLevel: state.thinkingLevel,
       model: state.model,
+      contextUsage: worker.contextUsage,
       busy: busyState(state, worker.bashRunning),
     };
   }

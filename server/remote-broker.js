@@ -186,6 +186,7 @@ export class RemoteBroker {
       messageCount: messages.length,
       modified: session.updatedAt,
       model: current.model,
+      contextUsage: current.contextUsage,
     };
   }
 
@@ -474,6 +475,7 @@ export class RemoteBroker {
     }
     if (event.type === "agent_settled") {
       meta.streaming = false;
+      if (isRecord(event.contextUsage)) meta.contextUsage = event.contextUsage;
       // Only turns seen starting here notify; a reconnecting idle terminal stays quiet.
       if (session.turnStartedAt) {
         this.onTurnEnd?.({

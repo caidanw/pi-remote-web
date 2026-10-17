@@ -28,6 +28,8 @@
     disabled?: boolean;
     canSend?: boolean;
     busy?: boolean;
+    /** How a message typed while busy reaches Pi. Enter steers, as in Pi. */
+    deliverAs?: "steer" | "followUp";
     sendTooltip?: string;
     sessionId?: string;
     sessionCwd?: string;
@@ -60,6 +62,7 @@
     disabled = false,
     canSend = false,
     busy = false,
+    deliverAs = $bindable("steer"),
     sendTooltip = "Send",
     sessionId = "",
     sessionCwd = "",
@@ -81,6 +84,9 @@
     onError,
     onFolderChange,
   }: Props = $props();
+
+  // Stop only while there's nothing to send; typing while busy steers or queues instead.
+  const hasInput = $derived(Boolean(value.trim()) || attachments.length > 0);
 
   function shortFolder(path: string) {
     const segments = path.split("/").filter(Boolean);
@@ -174,7 +180,7 @@
           Cancel
         </Button>
       {/if}
-      {#if busy && onStop}
+      {#if busy && onStop && !hasInput}
         <PromptInputAction tooltip="Stop">
           <Button
             size="icon"
@@ -186,7 +192,24 @@
           </Button>
         </PromptInputAction>
       {:else}
-        <PromptInputAction tooltip={sendTooltip}>
+        {#if busy}
+          <div class="flex h-8 items-center rounded-full bg-muted p-0.5 text-[12px] font-medium" role="group" aria-label="Delivery">
+            {#each [["steer", "Steer", "Send after the current step"], ["followUp", "Follow-up", "Send when Pi finishes"]] as [mode, label, hint] (mode)}
+              <button
+                type="button"
+                class="pi-hit h-full rounded-full px-2.5 transition-colors {deliverAs === mode
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'}"
+                aria-pressed={deliverAs === mode}
+                title={hint}
+                onclick={() => (deliverAs = mode as "steer" | "followUp")}
+              >
+                {label}
+              </button>
+            {/each}
+          </div>
+        {/if}
+        <PromptInputAction tooltip={busy ? (deliverAs === "steer" ? "Steer" : "Queue follow-up") : sendTooltip}>
           <Button
             size="icon"
             class="size-10 shrink-0 rounded-full sm:size-8"

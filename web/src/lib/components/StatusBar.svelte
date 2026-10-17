@@ -69,11 +69,12 @@
   const metaItems = $derived.by(() => {
     const items: MetaItem[] = [];
     if (ctxPct != null) {
-      const remaining = Math.max(0, Math.min(100, 100 - Math.round(ctxPct)));
+      // Used, not remaining, to match Pi's footer.
+      const used = Math.max(0, Math.min(100, Math.round(ctxPct)));
       items.push({
         kind: "context",
-        value: `${remaining}% left`,
-        label: `${remaining}% of the context window remains before the conversation may need compacting.`,
+        value: `${used}%`,
+        label: `${used}% of the context window used.`,
         warning: nearLimit,
       });
     }

@@ -39,6 +39,7 @@ describe("remote extension", () => {
     let thinking = "medium";
     let aborted = false;
     let compacted = false;
+    let idle = true;
     const models = [
       { provider: "test", id: "model", name: "Model", reasoning: true },
       { provider: "test", id: "other", name: "Other", reasoning: true },
@@ -65,7 +66,8 @@ describe("remote extension", () => {
       cwd: dir,
       model: { provider: "test", id: "model", name: "Model" },
       thinkingLevel: "medium",
-      isIdle: () => true,
+      isIdle: () => idle,
+      getContextUsage: () => ({ tokens: 50_000, contextWindow: 200_000, percent: 25 }),
       abort: () => {
         aborted = true;
       },
@@ -132,6 +134,32 @@ describe("remote extension", () => {
       await handlers.get("message_start")?.({ message: { role: "user", content: "hello" } }, context);
       const event = await waitFor(() => broker.listSessions()[0]?.lastEvent ?? null);
       assert.equal(event.type, "message_start");
+
+      // While busy, web-queued messages surface like Pi's own queue_update and leave on delivery.
+      const queues: unknown[] = [];
+      const unsubscribe = broker.subscribeSession(registered.runtimeId, (e) => {
+        const frame = e as { type?: string; steering?: string[]; followUp?: string[] };
+        if (frame.type === "queue_update") queues.push({ steering: frame.steering, followUp: frame.followUp });
+      });
+      idle = false;
+      await broker.command(registered.runtimeId, "steer", { message: "use staging" });
+      await broker.command(registered.runtimeId, "follow_up", { message: "open a PR" });
+      await handlers.get("message_start")?.(
+        { message: { role: "user", content: [{ type: "text", text: "use staging" }] } },
+        context,
+      );
+      await handlers.get("agent_settled")?.({}, context);
+      await waitFor(() => (queues.length === 4 ? queues : null));
+      unsubscribe();
+      assert.deepEqual(queues, [
+        { steering: ["use staging"], followUp: [] },
+        { steering: ["use staging"], followUp: ["open a PR"] },
+        { steering: [], followUp: ["open a PR"] },
+        { steering: [], followUp: [] },
+      ]);
+      await waitFor(() => broker.getSessionRow(registered.runtimeId).contextUsage ?? null);
+      assert.equal(broker.getSessionRow(registered.runtimeId).contextUsage?.percent, 25);
+      idle = true;
 
       // Tool work must reach the browser while it runs, not only at turn end.
       branch = [

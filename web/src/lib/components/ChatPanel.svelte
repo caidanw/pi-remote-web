@@ -291,6 +291,11 @@
     (Boolean(draft.trim()) || attachments.length > 0) && !sending,
   );
   const busy = $derived(streaming || bashRunning);
+  let deliverAs = $state<"steer" | "followUp">("steer");
+  // Each run starts on Pi's default (Enter steers).
+  $effect(() => {
+    if (!busy) deliverAs = "steer";
+  });
 
   /** pi-style `/` menu: only while draft is `/query` (no args yet). */
   let slashRemote = $state<SlashCommandInfo[]>([]);
@@ -1602,14 +1607,11 @@
         stream.bindSession(id, { messages: stream.messages });
         wire(id);
       }
+      // The queue itself is shown from Pi's queue_update events.
       if (streaming && mode === "followUp") {
         await followUp(id, body, imgPayload);
-        queueFollowUp = [...queueFollowUp, body || "(image)"];
-        void scrollBottom();
       } else if (streaming) {
         await steer(id, body, imgPayload);
-        queueSteer = [...queueSteer, body || "(image)"];
-        void scrollBottom();
       } else {
         flush();
         turnHadError = false;
@@ -1679,7 +1681,7 @@
         return;
       }
     }
-    void send("default");
+    void send(deliverAs === "followUp" ? "followUp" : "default");
   }
 
   function seedPrompt(text: string) {
@@ -1743,7 +1745,7 @@
         ? "Bash (no context)"
         : "Bash"
       : streaming
-        ? "Steer (Enter) · follow-up (⌥Enter)"
+        ? "Steer or queue a follow-up"
         : session?.remote
           ? "Message pi  (/ commands)"
           : "Message pi  (/ commands · ! bash)",
@@ -2218,16 +2220,6 @@
               {/each}
             </div>
           {/each}
-          {#if queueSteer.length || queueFollowUp.length}
-            <div class="rounded-md border border-dashed border-border/80 px-3 py-2 text-[12px] text-muted-foreground">
-              {#each queueSteer as t, qi (`s${qi}`)}
-                <div class="truncate">↗ steer: {t}</div>
-              {/each}
-              {#each queueFollowUp as t, qi (`f${qi}`)}
-                <div class="truncate">↓ follow-up: {t}</div>
-              {/each}
-            </div>
-          {/if}
           {#if busy && bashRunning}
             <div class="flex items-center gap-1.5 px-0.5 text-xs text-muted-foreground">
               <span bind:this={spinEl} class="font-mono text-primary" aria-hidden="true">⠋</span>
@@ -2314,12 +2306,24 @@
             onPick={pickSlash}
             onActive={(i) => (slashIdx = i)}
           />
+          {#if queueSteer.length || queueFollowUp.length}
+            <!-- Queued messages sit with the composer so they stay visible while scrolled up. -->
+            <ul class="mb-2 flex flex-col gap-1.5" aria-label="Queued messages">
+              {#each [...queueSteer.map((text) => ["Steering · after this step", text]), ...queueFollowUp.map((text) => ["Follow-up · when done", text])] as [label, text], qi (qi)}
+                <li class="rounded-xl bg-muted/70 px-3 py-2">
+                  <div class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+                  <div class="truncate text-[13px]">{text}</div>
+                </li>
+              {/each}
+            </ul>
+          {/if}
           <ChatComposer
             class={promptBoxClass}
             bind:value={draft}
+            bind:deliverAs
             {attachments}
             {placeholder}
-            isLoading={busy}
+            isLoading={sending}
             disabled={session ? !session.running && !session.id : false}
             {canSend}
             {busy}

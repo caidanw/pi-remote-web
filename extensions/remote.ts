@@ -58,6 +58,7 @@ function sessionState(pi: ExtensionAPI, ctx: ExtensionContext, nonce?: string) {
       : undefined,
     thinkingLevel: pi.getThinkingLevel(),
     streaming: !ctx.isIdle(),
+    contextUsage: ctx.getContextUsage?.(),
     ownershipNonce: nonce,
   };
 }
@@ -83,10 +84,38 @@ export default function remoteExtension(pi: ExtensionAPI): void {
   let currentContext: ExtensionContext | null = null;
   let currentLock: { lockDir: string; nonce: string } | null = null;
   let streamingMessage: unknown;
+  // Extensions don't receive Pi's queue_update, so mirror it for messages queued from the web.
+  const queue = { steering: [] as string[], followUp: [] as string[] };
 
   function publish(event: unknown, snapshot = false): void {
     client?.publish(event);
     if (snapshot) client?.snapshot();
+  }
+
+  function publishQueue(): void {
+    publish({ type: "queue_update", steering: [...queue.steering], followUp: [...queue.followUp] });
+  }
+
+  function enqueue(deliverAs: "steer" | "followUp", text: string): void {
+    queue[deliverAs === "steer" ? "steering" : "followUp"].push(text);
+    publishQueue();
+  }
+
+  /** Same rule as Pi's AgentSession: a starting user message leaves the queue it matches. */
+  function dequeue(content: unknown): void {
+    const text = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.filter((part) => part?.type === "text").map((part) => part.text).join("\n")
+        : "";
+    if (!text) return;
+    for (const list of [queue.steering, queue.followUp]) {
+      const index = list.indexOf(text);
+      if (index === -1) continue;
+      list.splice(index, 1);
+      publishQueue();
+      return;
+    }
   }
 
   /**
@@ -123,7 +152,9 @@ export default function remoteExtension(pi: ExtensionAPI): void {
           throw new Error("message required");
         }
         const deliverAs = payload.deliverAs === "followUp" ? "followUp" : "steer";
-        pi.sendUserMessage(content, ctx.isIdle() ? undefined : { deliverAs });
+        const idle = ctx.isIdle();
+        if (!idle) enqueue(deliverAs, payload.message);
+        pi.sendUserMessage(content, idle ? undefined : { deliverAs });
         return { accepted: true };
       }
       case "steer":
@@ -133,9 +164,10 @@ export default function remoteExtension(pi: ExtensionAPI): void {
         if (!payload.message.trim() && typeof content === "string") {
           throw new Error("message required");
         }
-        pi.sendUserMessage(content, {
-          deliverAs: frame.command === "steer" ? "steer" : "followUp",
-        });
+        const deliverAs = frame.command === "steer" ? "steer" : "followUp";
+        // Queue first: Pi may start the user message before sendUserMessage returns.
+        if (!ctx.isIdle()) enqueue(deliverAs, payload.message);
+        pi.sendUserMessage(content, { deliverAs });
         return { accepted: true };
       }
       case "abort":
@@ -218,6 +250,8 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     currentLock = null;
     currentContext = ctx;
     streamingMessage = undefined;
+    queue.steering.length = 0;
+    queue.followUp.length = 0;
 
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) {
@@ -292,11 +326,19 @@ export default function remoteExtension(pi: ExtensionAPI): void {
 
   pi.on("agent_start", (event) => publish({ type: "agent_start", ...event }));
   pi.on("agent_end", (event) => publish({ type: "agent_end", ...event }));
-  pi.on("agent_settled", (event) => publish({ type: "agent_settled", ...event }));
+  pi.on("agent_settled", (event) => {
+    if (queue.steering.length || queue.followUp.length) {
+      queue.steering.length = 0;
+      queue.followUp.length = 0;
+      publishQueue();
+    }
+    publish({ type: "agent_settled", ...event, contextUsage: currentContext?.getContextUsage?.() });
+  });
   pi.on("turn_start", (event) => publish({ type: "turn_start", ...event }));
   pi.on("turn_end", (event) => publish({ type: "turn_end", ...event }));
   pi.on("message_start", (event) => {
     if (event.message?.role === "assistant") streamingMessage = event.message;
+    if (event.message?.role === "user") dequeue(event.message.content);
     publish({ type: "message_start", ...event });
   });
   pi.on("message_update", (event) => {

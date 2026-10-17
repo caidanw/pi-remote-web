@@ -128,6 +128,27 @@ describe("browser-owned Pi RPC workers", () => {
     assert.equal(await readFile(auditFile, "utf8"), "slow first\nsecond\n");
   });
 
+  it("reports context usage on open and refreshes it when a turn settles", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-rpc-usage-"));
+    const manager = new RpcWorkerManager({
+      rpcEntry: fixtureRpc,
+      lockDir: path.join(root, "locks"),
+      sessionDir: () => path.join(root, "sessions"),
+    });
+    cleanups.push(async () => {
+      await manager.closeAll();
+      await rm(root, { recursive: true, force: true });
+    });
+    const row = await manager.open({ cwd: root, fresh: true });
+    assert.equal(row.contextUsage?.percent, 0);
+    await manager.prompt(row.id, "hello");
+    const deadline = Date.now() + 1000;
+    while (manager.get(row.id).contextUsage?.percent !== 10 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(manager.get(row.id).contextUsage?.percent, 10);
+  });
+
   it("reports the worker's stderr when it crashes on startup", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-rpc-crash-"));
     const manager = new RpcWorkerManager({
