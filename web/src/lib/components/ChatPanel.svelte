@@ -942,7 +942,6 @@
   let metaTimer = 0;
   /** Safety net when SSE drops mid-turn */
   let turnWatch = 0;
-  let lastSseAt = 0;
   let catchUpTimer = 0;
   /**
    * True from successful prompt until agent_settled (or failTurn).
@@ -994,13 +993,22 @@
     }
   }
 
-  /** Poll session until idle; reloads history if SSE missed events. */
+  /**
+   * Poll until idle in case SSE misses the settle. Only the small session row is polled;
+   * the transcript window (~1 MB on long sessions) reloads once the turn is over.
+   */
   function startTurnWatch(id: string) {
     stopTurnWatch();
-    lastSseAt = Date.now();
-    turnWatch = window.setInterval(() => {
+    turnWatch = window.setInterval(async () => {
       if (wiredId !== id) {
         stopTurnWatch();
+        return;
+      }
+      const row = await getSession(id).catch(() => null);
+      if (wiredId !== id || !row) return;
+      if (row.streaming || row.isBashRunning) {
+        stream.noteServerBusy(true);
+        syncTurnFlags();
         return;
       }
       void catchUp(id);
@@ -1156,7 +1164,6 @@
       id,
       (ev, meta) => {
         if (wiredId !== id) return;
-        lastSseAt = Date.now();
         // Canonical hub id may differ from disk list id
         const raw = ev as { type?: string; id?: string };
         if (
