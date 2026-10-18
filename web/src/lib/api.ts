@@ -627,6 +627,14 @@ export function followUp(id: string, message: string, images?: PromptImage[]) {
   );
 }
 
+/** Pi's dequeue: clears the session's queue and returns the texts for the composer. */
+export function clearQueue(id: string) {
+  return req<{ steering?: string[]; followUp?: string[] }>(
+    `/api/sessions/${encodeURIComponent(id)}/clear-queue`,
+    { method: "POST" },
+  );
+}
+
 export function bash(
   id: string,
   command: string,

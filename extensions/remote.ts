@@ -84,8 +84,13 @@ export default function remoteExtension(pi: ExtensionAPI): void {
   let currentContext: ExtensionContext | null = null;
   let currentLock: { lockDir: string; nonce: string } | null = null;
   let streamingMessage: unknown;
-  // Extensions don't receive Pi's queue_update, so mirror it for messages queued from the web.
-  const queue = { steering: [] as string[], followUp: [] as string[] };
+  // Extensions don't receive Pi's queue_update, so mirror the steers handed to Pi. Web follow-ups
+  // wait here until the run settles instead: an extension can't take Pi's queue back for editing.
+  const queue = {
+    steering: [] as string[],
+    followUp: [] as { text: string; content: ReturnType<typeof promptContent> }[],
+  };
+  let runAborted = false;
 
   function publish(event: unknown, snapshot = false): void {
     client?.publish(event);
@@ -93,11 +98,25 @@ export default function remoteExtension(pi: ExtensionAPI): void {
   }
 
   function publishQueue(): void {
-    publish({ type: "queue_update", steering: [...queue.steering], followUp: [...queue.followUp] });
+    publish({
+      type: "queue_update",
+      steering: [...queue.steering],
+      followUp: queue.followUp.map((item) => item.text),
+    });
   }
 
-  function enqueue(deliverAs: "steer" | "followUp", text: string): void {
-    queue[deliverAs === "steer" ? "steering" : "followUp"].push(text);
+  function queueWhileBusy(
+    deliverAs: "steer" | "followUp",
+    text: string,
+    content: ReturnType<typeof promptContent>,
+  ): void {
+    if (deliverAs === "followUp") {
+      queue.followUp.push({ text, content });
+    } else {
+      // Mirror first: Pi may start the user message before sendUserMessage returns.
+      queue.steering.push(text);
+      pi.sendUserMessage(content, { deliverAs: "steer" });
+    }
     publishQueue();
   }
 
@@ -108,14 +127,10 @@ export default function remoteExtension(pi: ExtensionAPI): void {
       : Array.isArray(content)
         ? content.filter((part) => part?.type === "text").map((part) => part.text).join("\n")
         : "";
-    if (!text) return;
-    for (const list of [queue.steering, queue.followUp]) {
-      const index = list.indexOf(text);
-      if (index === -1) continue;
-      list.splice(index, 1);
-      publishQueue();
-      return;
-    }
+    const index = text ? queue.steering.indexOf(text) : -1;
+    if (index === -1) return;
+    queue.steering.splice(index, 1);
+    publishQueue();
   }
 
   /**
@@ -151,10 +166,8 @@ export default function remoteExtension(pi: ExtensionAPI): void {
         if (!payload.message.trim() && typeof content === "string") {
           throw new Error("message required");
         }
-        const deliverAs = payload.deliverAs === "followUp" ? "followUp" : "steer";
-        const idle = ctx.isIdle();
-        if (!idle) enqueue(deliverAs, payload.message);
-        pi.sendUserMessage(content, idle ? undefined : { deliverAs });
+        if (ctx.isIdle()) pi.sendUserMessage(content);
+        else queueWhileBusy(payload.deliverAs === "followUp" ? "followUp" : "steer", payload.message, content);
         return { accepted: true };
       }
       case "steer":
@@ -165,10 +178,15 @@ export default function remoteExtension(pi: ExtensionAPI): void {
           throw new Error("message required");
         }
         const deliverAs = frame.command === "steer" ? "steer" : "followUp";
-        // Queue first: Pi may start the user message before sendUserMessage returns.
-        if (!ctx.isIdle()) enqueue(deliverAs, payload.message);
-        pi.sendUserMessage(content, { deliverAs });
+        if (ctx.isIdle()) pi.sendUserMessage(content, { deliverAs });
+        else queueWhileBusy(deliverAs, payload.message, content);
         return { accepted: true };
+      }
+      case "clear_queue": {
+        // Steers already handed to Pi can't be retracted from an extension; held follow-ups can.
+        const followUp = queue.followUp.splice(0).map((item) => item.text);
+        publishQueue();
+        return { steering: [], followUp };
       }
       case "abort":
         ctx.abort();
@@ -324,15 +342,23 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     ctx.ui.setStatus("pi-remote", undefined);
   });
 
-  pi.on("agent_start", (event) => publish({ type: "agent_start", ...event }));
-  pi.on("agent_end", (event) => publish({ type: "agent_end", ...event }));
+  pi.on("agent_start", (event) => {
+    runAborted = false;
+    publish({ type: "agent_start", ...event });
+  });
+  pi.on("agent_end", (event) => {
+    runAborted = (event.messages?.at(-1) as { stopReason?: string } | undefined)?.stopReason === "aborted";
+    publish({ type: "agent_end", ...event });
+  });
   pi.on("agent_settled", (event) => {
-    if (queue.steering.length || queue.followUp.length) {
+    // Like Pi, a stopped run keeps its follow-ups; otherwise the next held one starts a new run.
+    const next = runAborted ? undefined : queue.followUp.shift();
+    if (queue.steering.length || next) {
       queue.steering.length = 0;
-      queue.followUp.length = 0;
       publishQueue();
     }
     publish({ type: "agent_settled", ...event, contextUsage: currentContext?.getContextUsage?.() });
+    if (next) pi.sendUserMessage(next.content, { deliverAs: "followUp" });
   });
   pi.on("turn_start", (event) => publish({ type: "turn_start", ...event }));
   pi.on("turn_end", (event) => publish({ type: "turn_end", ...event }));

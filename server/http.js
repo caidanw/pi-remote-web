@@ -998,6 +998,15 @@ async function handleApi(req, res, remoteBroker, workers, worktrees, auth, push)
       return json(res, 200, { ok: true });
     }
 
+    // POST /api/sessions/:id/clear-queue → { steering, followUp } texts pulled back for editing
+    id = sessionAction(pathname, "clear-queue");
+    if (method === "POST" && id) {
+      if (hasRemote(remoteBroker, id)) return json(res, 200, await remoteBroker.command(id, "clear_queue"));
+      const source = localSource(workers, id);
+      const s = await source.ensure(id);
+      return json(res, 200, await source.clearQueue(s.id));
+    }
+
     // POST /api/sessions/:id/model  { provider, id } | { cycle }
     id = sessionAction(pathname, "model");
     if (method === "POST" && id) {

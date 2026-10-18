@@ -274,6 +274,10 @@ export class RpcWorkerManager {
     return this.#operation(id, (worker) => this.#request(worker, { type: "abort" }));
   }
 
+  clearQueue(id) {
+    return this.#operation(id, (worker) => this.#request(worker, { type: "clear_queue" }));
+  }
+
   steer(id, message, images) {
     return this.#operation(id, (worker) =>
       this.#request(worker, { type: "steer", message, images }),

@@ -1124,6 +1124,11 @@ export class SessionHub {
     await s.session.abort();
   }
 
+  /** @param {string} id @returns {{ steering: string[]; followUp: string[] }} */
+  clearQueue(id) {
+    return this.require(id).session.clearQueue();
+  }
+
   /**
    * @param {string} id
    * @param {string} name

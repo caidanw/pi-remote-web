@@ -142,21 +142,48 @@ describe("remote extension", () => {
         if (frame.type === "queue_update") queues.push({ steering: frame.steering, followUp: frame.followUp });
       });
       idle = false;
+      const sentBefore = remotePrompts.length;
       await broker.command(registered.runtimeId, "steer", { message: "use staging" });
+      await broker.command(registered.runtimeId, "follow_up", { message: "open a PR" });
+      await broker.command(registered.runtimeId, "follow_up", { message: "and tag it" });
+      // Follow-ups wait in the adapter, so they can come back to the composer for editing.
+      assert.deepEqual(remotePrompts.slice(sentBefore), [
+        { message: "use staging", options: { deliverAs: "steer" } },
+      ]);
+      assert.deepEqual(await broker.command(registered.runtimeId, "clear_queue"), {
+        steering: [],
+        followUp: ["open a PR", "and tag it"],
+      });
       await broker.command(registered.runtimeId, "follow_up", { message: "open a PR" });
       await handlers.get("message_start")?.(
         { message: { role: "user", content: [{ type: "text", text: "use staging" }] } },
         context,
       );
+      await handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "stop" }] }, context);
       await handlers.get("agent_settled")?.({}, context);
-      await waitFor(() => (queues.length === 4 ? queues : null));
+      await waitFor(() => (queues.length === 7 ? queues : null));
       unsubscribe();
       assert.deepEqual(queues, [
+        { steering: ["use staging"], followUp: [] },
+        { steering: ["use staging"], followUp: ["open a PR"] },
+        { steering: ["use staging"], followUp: ["open a PR", "and tag it"] },
         { steering: ["use staging"], followUp: [] },
         { steering: ["use staging"], followUp: ["open a PR"] },
         { steering: [], followUp: ["open a PR"] },
         { steering: [], followUp: [] },
       ]);
+      // A settled run hands Pi the next held follow-up, as Pi would have before settling.
+      assert.deepEqual(remotePrompts.at(-1), { message: "open a PR", options: { deliverAs: "followUp" } });
+      // A stopped run keeps its follow-ups instead of starting them.
+      const sentBeforeStop = remotePrompts.length;
+      await broker.command(registered.runtimeId, "follow_up", { message: "after the stop" });
+      await handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "aborted" }] }, context);
+      await handlers.get("agent_settled")?.({}, context);
+      assert.equal(remotePrompts.length, sentBeforeStop);
+      assert.deepEqual(await broker.command(registered.runtimeId, "clear_queue"), {
+        steering: [],
+        followUp: ["after the stop"],
+      });
       await waitFor(() => broker.getSessionRow(registered.runtimeId).contextUsage ?? null);
       assert.equal(broker.getSessionRow(registered.runtimeId).contextUsage?.percent, 25);
       idle = true;

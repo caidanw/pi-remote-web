@@ -13,6 +13,7 @@
   } from "$lib/api";
   import {
     abort,
+    clearQueue,
     abortBash,
     bash,
     followUp,
@@ -64,6 +65,7 @@
   import PanelRight from "@lucide/svelte/icons/panel-right";
   import { onDestroy, tick, untrack } from "svelte";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Pencil from "@lucide/svelte/icons/pencil";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import Bug from "@lucide/svelte/icons/bug";
   import MapIcon from "@lucide/svelte/icons/map";
@@ -1721,8 +1723,27 @@
     }
   }
 
+  /** Pi's dequeue: queued messages go back into the composer, ahead of any draft. */
+  async function restoreQueued(fromTap = false) {
+    if (!session?.id) return;
+    try {
+      const { steering = [], followUp = [] } = await clearQueue(session.id);
+      const restored = [...steering, ...followUp];
+      if (!restored.length) {
+        if (fromTap) error = "Pi already has that message, so it can't be edited now.";
+        return;
+      }
+      draft = [...restored, draft].filter((text) => text.trim()).join("\n\n");
+      focusComposer({ force: true });
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
   async function stop() {
     if (!session?.id) return;
+    // Like Escape in Pi: stopping hands queued messages back instead of dropping or running them.
+    if (queueSteer.length || queueFollowUp.length) await restoreQueued();
     try {
       if (bashRunning) await abortBash(session.id);
       else await abort(session.id);
@@ -2309,10 +2330,29 @@
           {#if queueSteer.length || queueFollowUp.length}
             <!-- Queued messages sit with the composer so they stay visible while scrolled up. -->
             <ul class="mb-2 flex flex-col gap-1.5" aria-label="Queued messages">
-              {#each [...queueSteer.map((text) => ["Steering · after this step", text]), ...queueFollowUp.map((text) => ["Follow-up · when done", text])] as [label, text], qi (qi)}
-                <li class="rounded-xl bg-muted/70 px-3 py-2">
-                  <div class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
-                  <div class="truncate text-[13px]">{text}</div>
+              {#each [...queueSteer.map((text) => ({ steer: true, text })), ...queueFollowUp.map((text) => ({ steer: false, text }))] as item, qi (qi)}
+                {@const label = item.steer ? "Steering · after this step" : "Follow-up · when done"}
+                <li>
+                  <!-- A terminal's Pi already holds its steers; extensions can't take them back. -->
+                  {#if item.steer && session?.remote}
+                    <div class="rounded-xl bg-muted/70 px-3 py-2">
+                      <span class="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+                      <span class="block truncate text-[13px]">{item.text}</span>
+                    </div>
+                  {:else}
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-2 rounded-xl bg-muted/70 px-3 py-2 text-left transition-colors hover:bg-muted"
+                      title="Edit in the composer"
+                      onclick={() => void restoreQueued(true)}
+                    >
+                      <span class="min-w-0 flex-1">
+                        <span class="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+                        <span class="block truncate text-[13px]">{item.text}</span>
+                      </span>
+                      <Pencil class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    </button>
+                  {/if}
                 </li>
               {/each}
             </ul>
