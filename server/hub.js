@@ -18,6 +18,7 @@ import {
   resolveModelScopeWithDiagnostics,
   SessionManager,
   SettingsManager,
+  sessionEntryToContextMessages,
 } from "@earendil-works/pi-coding-agent";
 import {
   acquireSessionLock,
@@ -1058,7 +1059,8 @@ export class SessionHub {
   /** @param {string} id */
   getMessages(id) {
     const s = this.require(id);
-    const msgs = s.session.messages;
+    // The whole branch, as Pi's scrollback shows it; session.messages is the compacted context.
+    const msgs = s.session.sessionManager.getBranch().flatMap(sessionEntryToContextMessages);
     // Partial assistant is only on agent.state until message_end — include so REST
     // catch-up / reconnect can paint mid-turn (SSE is still the live path).
     const live = s.session.agent?.state?.streamingMessage;

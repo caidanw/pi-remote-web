@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   getAgentDir,
+  sessionEntryToContextMessages,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -35,28 +36,9 @@ function lockDir(): string {
   );
 }
 
-type BranchEntry = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>[number];
-
-/** As Pi's createCustomMessage: a custom_message entry (e.g. a subagent notice) as a message. */
-function customMessage(entry: Extract<BranchEntry, { type: "custom_message" }>) {
-  return {
-    role: "custom",
-    customType: entry.customType,
-    content: entry.content,
-    display: entry.display,
-    details: entry.details,
-    timestamp: new Date(entry.timestamp).getTime(),
-  };
-}
-
+/** The whole branch as Pi's scrollback shows it, compaction and branch summaries included. */
 function messages(ctx: ExtensionContext, streamingMessage?: unknown): unknown[] {
-  const transcript = ctx.sessionManager.getBranch().flatMap((entry) =>
-    entry.type === "message"
-      ? [entry.message]
-      : entry.type === "custom_message"
-        ? [customMessage(entry)]
-        : [],
-  );
+  const transcript = ctx.sessionManager.getBranch().flatMap(sessionEntryToContextMessages);
   return streamingMessage ? [...transcript, streamingMessage] : transcript;
 }
 
@@ -157,10 +139,10 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     `${String(message.customType)}\n${typeof message.content === "string" ? message.content : JSON.stringify(message.content)}`;
   function publishAppendedCustomMessages(ctx: ExtensionContext): void {
     const branch = ctx.sessionManager.getBranch();
-    const tail: ReturnType<typeof customMessage>[] = [];
+    const tail: ReturnType<typeof sessionEntryToContextMessages> = [];
     for (let i = branch.length - 1; i >= 0 && branch[i]!.type !== "message"; i -= 1) {
       const entry = branch[i]!;
-      if (entry.type === "custom_message") tail.unshift(customMessage(entry));
+      if (entry.type === "custom_message") tail.unshift(...sessionEntryToContextMessages(entry));
     }
     for (const message of tail) {
       const key = customKey(message);

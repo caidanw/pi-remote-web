@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isSubagentWake } from "./push.js";
 import { upsertMessage } from "./remote-broker.js";
+import { newestWithin, readBranchMessages } from "./transcript.js";
 import { assertNoUnregisteredWriter } from "./live-session-guard.js";
 import {
   acquireSessionLock,
@@ -20,6 +21,8 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 // A worker is our own child and its frames carry the whole context, images included
 // (9 MB on real sessions). The 8 MB socket limit is for untrusted peers.
 const RPC_MAX_FRAME_CHARS = 256 * 1024 * 1024;
+// Newest part of a browser session's history kept in memory (a full one reaches 80 MB).
+const HISTORY_MAX_CHARS = 16 * 1024 * 1024;
 const RPC_ENTRY = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent/rpc-entry"));
 
 /**
@@ -195,9 +198,7 @@ export class RpcWorkerManager {
         const state = await this.#request(worker, { type: "get_state" });
         worker.id = state.sessionId;
         worker.state = state;
-        worker.messages = await this.#request(worker, { type: "get_messages" }).then(
-          (data) => data.messages ?? [],
-        );
+        worker.messages = newestWithin(await readBranchMessages(sessionPath), HISTORY_MAX_CHARS);
         await this.#refreshUsage(worker);
         this.workers.set(worker.id, worker);
         this.#changed();
@@ -588,7 +589,6 @@ export class RpcWorkerManager {
     }
     if (event.type === "agent_settled") {
       worker.state.isStreaming = false;
-      void this.#refreshMessages(worker);
       void this.#refreshUsage(worker).then(() => this.#changed());
       // Only turns seen starting here notify; a reattach to an idle session stays quiet.
       if (worker.turnStartedAt) {
@@ -617,6 +617,8 @@ export class RpcWorkerManager {
       // Refetching the whole context per message moved megabytes each step; settle still resyncs.
       if (event.message) upsertMessage(worker, event.message);
     }
+    // Compaction appends a summary entry; message events carry everything else.
+    if (event.type === "compaction_end") void this.#refreshMessages(worker);
     if (event.type === "bash_start") worker.bashRunning = true;
     if (event.type === "bash_end") worker.bashRunning = false;
     if (event.type === "model_select") worker.state.model = event.model;
@@ -711,13 +713,15 @@ export class RpcWorkerManager {
     }
   }
 
+  /**
+   * The session file's whole branch, as a terminal shows it. Pi's get_messages is the
+   * compacted context, which dropped everything before a compaction from the page.
+   */
   async #refreshMessages(worker) {
-    if (!worker.running) return;
     try {
-      const data = await this.#request(worker, { type: "get_messages" });
-      worker.messages = data.messages ?? [];
+      worker.messages = newestWithin(await readBranchMessages(worker.path), HISTORY_MAX_CHARS);
     } catch {
-      /* worker exit path owns cleanup */
+      /* keep the streamed history; the next compaction or reopen retries */
     }
   }
 

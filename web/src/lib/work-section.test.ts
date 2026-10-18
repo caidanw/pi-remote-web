@@ -11,6 +11,7 @@ import {
   messageTimestamp,
   startsTopLevelTurn,
   turnPlacement,
+  isTurnLead,
   turnStartAtOrBefore,
   wholeTurnStart,
   uniqueMessageKeys,
@@ -198,5 +199,23 @@ describe("subagent turns", () => {
     });
     // Hidden notices are dropped; a wake with no visible notice still starts its own turn.
     assert.deepEqual(turns, [[0, 1], [3, 4, 5], [7]]);
+  });
+
+  it("keeps a compaction summary visible at the top of the work that followed it", () => {
+    const messages = [
+      { role: "user", timestamp: 1, content: "Long task" },
+      { role: "assistant", timestamp: 2, stopReason: "toolUse", content: [{ type: "toolCall", id: "t", name: "bash" }] },
+      { role: "compactionSummary", timestamp: 3, summary: "Earlier work" },
+      { role: "assistant", timestamp: 4, stopReason: "stop", content: [{ type: "text", text: "Done." }] },
+    ];
+    const turns: number[][] = [];
+    messages.forEach((message, i) => {
+      const current = turns.at(-1)?.map((j) => messages[j]!) ?? null;
+      const placement = turnPlacement(current, message);
+      if (placement === "start") turns.push([i]);
+      else if (placement === "append") turns.at(-1)!.push(i);
+    });
+    assert.deepEqual(turns, [[0, 1], [2, 3]]);
+    assert.equal(isTurnLead(messages[2]!), true);
   });
 });

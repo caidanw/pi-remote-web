@@ -5,9 +5,7 @@ const sessionIndex = process.argv.indexOf("--session");
 const sessionFile = process.argv[sessionIndex + 1];
 const header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0]);
 let streaming = false;
-let messages = process.env.PI_TEST_CONTEXT_CHARS
-  ? [{ role: "user", timestamp: 1, content: "x".repeat(Number(process.env.PI_TEST_CONTEXT_CHARS)) }]
-  : [];
+let messages = [];
 let buffer = "";
 let fragmented = false;
 const auditFile = process.env.PI_TEST_AUDIT_FILE;

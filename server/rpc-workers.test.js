@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, rm, mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, readFile, rm, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,21 +128,46 @@ describe("browser-owned Pi RPC workers", () => {
     assert.equal(await readFile(auditFile, "utf8"), "slow first\nsecond\n");
   });
 
-  it("opens a session whose context is larger than the socket frame limit", async () => {
+  it("survives frames larger than the socket frame limit", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-rpc-big-"));
     const manager = new RpcWorkerManager({
       rpcEntry: fixtureRpc,
       lockDir: path.join(root, "locks"),
       sessionDir: () => path.join(root, "sessions"),
-      // Real sessions with screenshots reach 9 MB of context; 8 MB used to kill the worker.
-      env: { PI_TEST_CONTEXT_CHARS: String(12 * 1024 * 1024) },
     });
     cleanups.push(async () => {
       await manager.closeAll();
       await rm(root, { recursive: true, force: true });
     });
     const row = await manager.open({ cwd: root, fresh: true });
-    assert.equal(manager.getMessages(row.id)[0].content.length, 12 * 1024 * 1024);
+    // Real messages with screenshots exceed 8 MB; that limit used to kill the worker.
+    const big = "x".repeat(12 * 1024 * 1024);
+    await manager.prompt(row.id, big);
+    await waitFor(() => manager.getMessages(row.id).length === 1);
+    assert.equal(manager.getMessages(row.id)[0].content.length, big.length);
+    assert.equal(manager.get(row.id).running, true);
+  });
+
+  it("serves the whole branch from the file, not Pi's compacted context", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-rpc-history-"));
+    const manager = new RpcWorkerManager({
+      rpcEntry: fixtureRpc,
+      lockDir: path.join(root, "locks"),
+      guardOptions: { recentWriteMs: 0 },
+    });
+    cleanups.push(async () => {
+      await manager.closeAll();
+      await rm(root, { recursive: true, force: true });
+    });
+    const sessionPath = await savedSession(root, "compacted");
+    const at = (n) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
+    await appendFile(sessionPath, [
+      { type: "message", id: "a", parentId: null, timestamp: at(1), message: { role: "user", content: "before compaction", timestamp: 1 } },
+      { type: "compaction", id: "c", parentId: "a", timestamp: at(2), summary: "Earlier work", firstKeptEntryId: "a", tokensBefore: 10 },
+      { type: "message", id: "b", parentId: "c", timestamp: at(3), message: { role: "user", content: "after", timestamp: 3 } },
+    ].map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+    const row = await manager.open({ cwd: root, path: sessionPath });
+    assert.deepEqual(manager.getMessages(row.id).map((m) => m.role), ["user", "compactionSummary", "user"]);
   });
 
   it("reports context usage on open and refreshes it when a turn settles", async () => {

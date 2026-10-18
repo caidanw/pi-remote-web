@@ -28,9 +28,14 @@ export function isSubagentWake(message: ChatMessage): boolean {
   return message.role === "user" && messageText(message).startsWith("Inspect subagent updates above.");
 }
 
-/** Shown above a turn's work section: the prompt, or the subagent notices that started the turn. */
+/** Compaction and branch summaries mark where the history changed, so they stand on their own. */
+function isSummary(message: ChatMessage): boolean {
+  return message.role === "compactionSummary" || message.role === "branchSummary";
+}
+
+/** Shown above a turn's work section: the prompt, a summary, or the subagent notices that started the turn. */
 export function isTurnLead(message: ChatMessage): boolean {
-  return message.role === "user" || isSubagentNotice(message);
+  return message.role === "user" || isSubagentNotice(message) || isSummary(message);
 }
 
 /**
@@ -43,7 +48,12 @@ export function turnPlacement(current: ChatMessage[] | null, message: ChatMessag
   if (!current?.length) return "start";
   const noticeLead = current.every(isTurnLead) && current.some(isSubagentNotice);
   if (noticeLead && (isSubagentNotice(message) || isSubagentWake(message))) return "append";
-  if (startsTopLevelTurn(message) || isSubagentNotice(message) || isComposerCommand(current[0]!)) return "start";
+  if (
+    startsTopLevelTurn(message) ||
+    isSubagentNotice(message) ||
+    isSummary(message) ||
+    isComposerCommand(current[0]!)
+  ) return "start";
   return "append";
 }
 
