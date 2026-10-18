@@ -10,6 +10,7 @@ import {
   isFinalAssistantResponse,
   messageTimestamp,
   startsTopLevelTurn,
+  turnPlacement,
   turnStartAtOrBefore,
   wholeTurnStart,
   uniqueMessageKeys,
@@ -164,5 +165,38 @@ describe("whole-turn windowing", () => {
     assert.equal(turnStartAtOrBefore(window, 100, 103), 102);
     assert.equal(turnStartAtOrBefore(window, 100, 101), null); // needs an older page
     assert.equal(turnStartAtOrBefore(window, 100, 90), null);
+  });
+});
+
+describe("subagent turns", () => {
+  const wake = {
+    role: "user",
+    timestamp: 5,
+    content: [{ type: "text", text: "Inspect subagent updates above. Answer pending supervisor requests within your authority." }],
+  };
+  const notice = (customType: string, display: boolean, timestamp: number) => ({
+    role: "custom", customType, display, timestamp, content: `${customType} body`,
+  });
+
+  it("opens a turn with visible notices and folds the wake into it", () => {
+    const messages = [
+      { role: "user", timestamp: 1, content: "Run the workers" },
+      { role: "assistant", timestamp: 2, stopReason: "stop", content: [{ type: "text", text: "Started." }] },
+      notice("subagent-incremental-child-notify", false, 3),
+      notice("subagent_supervisor_request", true, 4),
+      wake,
+      { role: "assistant", timestamp: 6, stopReason: "stop", content: [{ type: "text", text: "Answered." }] },
+      notice("subagent-notify", false, 7),
+      { ...wake, timestamp: 8 },
+    ];
+    const turns: number[][] = [];
+    messages.forEach((message, i) => {
+      const current = turns.at(-1)?.map((j) => messages[j]!) ?? null;
+      const placement = turnPlacement(current, message);
+      if (placement === "start") turns.push([i]);
+      else if (placement === "append") turns.at(-1)!.push(i);
+    });
+    // Hidden notices are dropped; a wake with no visible notice still starts its own turn.
+    assert.deepEqual(turns, [[0, 1], [3, 4, 5], [7]]);
   });
 });

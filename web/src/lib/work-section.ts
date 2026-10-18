@@ -1,5 +1,5 @@
 import type { ChatMessage, ContentPart } from "./api.ts";
-import { getParts, messageKey } from "./api.ts";
+import { getParts, messageKey, messageText } from "./api.ts";
 
 export function isComposerCommand(message: ChatMessage): boolean {
   return (
@@ -11,6 +11,40 @@ export function isComposerCommand(message: ChatMessage): boolean {
 /** Messages initiated directly from the composer must not join prior agent work. */
 export function startsTopLevelTurn(message: ChatMessage): boolean {
   return message.role === "user" || isComposerCommand(message);
+}
+
+/** pi-subagents reports to the parent with custom messages (subagent-notify, subagent_supervisor_request, ...). */
+export function isSubagentNotice(message: ChatMessage): boolean {
+  return (
+    message.role === "custom" &&
+    message.display !== false &&
+    typeof message.customType === "string" &&
+    message.customType.startsWith("subagent")
+  );
+}
+
+/** pi-subagents wakes an idle parent with this fixed user message (PARENT_WAKE_TEXT). */
+export function isSubagentWake(message: ChatMessage): boolean {
+  return message.role === "user" && messageText(message).startsWith("Inspect subagent updates above.");
+}
+
+/** Shown above a turn's work section: the prompt, or the subagent notices that started the turn. */
+export function isTurnLead(message: ChatMessage): boolean {
+  return message.role === "user" || isSubagentNotice(message);
+}
+
+/**
+ * Where a message goes in the turn list. Hidden: Pi's system snapshot and custom messages Pi
+ * doesn't display. Subagent notices open a turn, and the wake that follows joins them, so the
+ * parent's resulting run reads as a reply to the notices rather than to a user prompt.
+ */
+export function turnPlacement(current: ChatMessage[] | null, message: ChatMessage): "skip" | "start" | "append" {
+  if (message.role === "system" || (message.role === "custom" && message.display === false)) return "skip";
+  if (!current?.length) return "start";
+  const noticeLead = current.every(isTurnLead) && current.some(isSubagentNotice);
+  if (noticeLead && (isSubagentNotice(message) || isSubagentWake(message))) return "append";
+  if (startsTopLevelTurn(message) || isSubagentNotice(message) || isComposerCommand(current[0]!)) return "start";
+  return "append";
 }
 
 export function messageTimestamp(message: ChatMessage | undefined): number | null {

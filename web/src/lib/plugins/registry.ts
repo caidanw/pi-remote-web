@@ -6,6 +6,8 @@
  */
 import type { Component } from "svelte";
 import type { ChatMessage } from "$lib/api";
+import SubagentMessage from "$lib/components/SubagentMessage.svelte";
+import { isSubagentNotice, isSubagentWake } from "$lib/work-section";
 
 export type MessageRendererProps = {
   message: ChatMessage;
@@ -38,3 +40,9 @@ export function findMessagePlugin(msg: ChatMessage): GuiPlugin | undefined {
 export function listPlugins() {
   return [...plugins];
 }
+
+registerPlugin({
+  id: "pi-subagents",
+  match: (msg) => isSubagentNotice(msg) || isSubagentWake(msg),
+  Message: SubagentMessage,
+});

@@ -1,13 +1,14 @@
 <script lang="ts">
   import Markdown from "agentic-ui-kit/components/prompt-kit/markdown.svelte";
   import Archive from "@lucide/svelte/icons/archive";
+  import Bot from "@lucide/svelte/icons/bot";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import Terminal from "@lucide/svelte/icons/terminal";
 
   type Props = {
-    kind: "compaction" | "branch" | "skill" | "command";
+    kind: "compaction" | "branch" | "skill" | "command" | "subagent";
     title: string;
     body: string;
     meta?: string;
@@ -25,10 +26,15 @@
     bodyStyle = "markdown",
     status = "done",
   }: Props = $props();
+  let open = $state(false);
 
   const tone = $derived(
     kind === "compaction"
       ? "border-violet-500/25 bg-violet-500/[0.06] text-violet-700 dark:text-violet-300"
+      : kind === "subagent" && status === "warning"
+        ? "border-amber-500/30 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300"
+      : kind === "subagent"
+        ? "border-sky-500/25 bg-sky-500/[0.06] text-sky-700 dark:text-sky-300"
       : kind === "skill"
         ? "border-cyan-500/25 bg-cyan-500/[0.06] text-cyan-700 dark:text-cyan-300"
         : kind === "command" && status === "error"
@@ -51,6 +57,8 @@
       <Sparkles class="size-3.5" />
     {:else if kind === "command"}
       <Terminal class="size-3.5" />
+    {:else if kind === "subagent"}
+      <Bot class="size-3.5" />
     {:else}
       <GitBranch class="size-3.5" />
     {/if}
@@ -70,19 +78,22 @@
 {/snippet}
 
 {#if body.trim()}
-  <details class="group/special w-full min-w-0 rounded-lg border {tone}">
+  <!-- Body mounts only when opened: long sessions carry hundreds of these. -->
+  <details class="group/special w-full min-w-0 rounded-lg border {tone}" bind:open>
     <summary
       class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] select-none [&::-webkit-details-marker]:hidden"
     >
       {@render header(true)}
     </summary>
-    <div class="border-t border-current/15 px-3 py-2.5 text-foreground/85">
-      {#if bodyStyle === "pre"}
-        <pre class="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/85">{body}</pre>
-      {:else}
-        <Markdown content={body} compact={true} />
-      {/if}
-    </div>
+    {#if open}
+      <div class="border-t border-current/15 px-3 py-2.5 text-foreground/85">
+        {#if bodyStyle === "pre"}
+          <pre class="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/85">{body}</pre>
+        {:else}
+          <Markdown content={body} compact={true} />
+        {/if}
+      </div>
+    {/if}
   </details>
 {:else}
   <div class="w-full min-w-0 rounded-lg border {tone}">

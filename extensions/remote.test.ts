@@ -188,6 +188,30 @@ describe("remote extension", () => {
       assert.equal(broker.getSessionRow(registered.runtimeId).contextUsage?.percent, 25);
       idle = true;
 
+      // Subagent notices appended between runs reach the browser once, when the next run starts.
+      const notice = {
+        type: "custom_message",
+        id: "notice-1",
+        customType: "subagent_supervisor_request",
+        content: "Subagent needs a supervisor decision.",
+        display: true,
+        timestamp: "2026-10-13T00:00:00.000Z",
+      };
+      branch = [{ type: "message", message: { role: "assistant", content: [] } }, notice as never];
+      const published: { type?: string; message?: { role?: string; customType?: string } }[] = [];
+      const stopWatching = broker.subscribeSession(registered.runtimeId, (e) => published.push(e as never));
+      await handlers.get("agent_start")?.({}, context);
+      await handlers.get("agent_start")?.({}, context);
+      await waitFor(() => (published.filter((e) => e.type === "agent_start").length === 2 ? published : null));
+      stopWatching();
+      const notices = published.filter((e) => e.type === "message_start" && e.message?.role === "custom");
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0]!.message!.customType, "subagent_supervisor_request");
+      assert.equal(
+        broker.getMessages(registered.runtimeId).filter((m: { role?: string }) => m?.role === "custom").length,
+        1,
+      );
+
       // Tool work must reach the browser while it runs, not only at turn end.
       branch = [
         {

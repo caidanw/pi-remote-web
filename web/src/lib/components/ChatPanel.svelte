@@ -50,10 +50,10 @@
     uniqueMessageKeys,
     wholeTurnStart,
     hasAssistantWork,
-    isComposerCommand,
     isFinalAssistantResponse,
+    isTurnLead,
     messageTimestamp,
-    startsTopLevelTurn,
+    turnPlacement,
     workSectionOpen,
   } from "$lib/work-section";
   import ChatComposer from "$lib/components/ChatComposer.svelte";
@@ -1794,22 +1794,20 @@
   const messageTurns = $derived.by(() => {
     const slice = messages.slice(hiddenMsgCount);
     type Item = { m: ChatMsg; i: number };
-    type RawTurn = { startIndex: number; items: Item[] };
+    type RawTurn = { startIndex: number; items: Item[]; msgs: ChatMsg[] };
     const rawTurns: RawTurn[] = [];
     let cur: RawTurn | null = null;
     for (let j = 0; j < slice.length; j++) {
       const i = j + hiddenMsgCount;
       const m = slice[j]!;
-      // Pi records a system-prompt snapshot (role "system") per session; it isn't chat.
-      if (m.role === "system") continue;
-      const followsStandaloneCommand = Boolean(
-        cur?.items[0] && isComposerCommand(cur.items[0].m),
-      );
-      if (startsTopLevelTurn(m) || followsStandaloneCommand || !cur) {
-        cur = { startIndex: i, items: [] };
+      const placement = turnPlacement(cur?.msgs ?? null, m);
+      if (placement === "skip") continue;
+      if (placement === "start" || !cur) {
+        cur = { startIndex: i, items: [], msgs: [] };
         rawTurns.push(cur);
       }
       cur.items.push({ m, i });
+      cur.msgs.push(m);
     }
     return rawTurns.map((turn, turnIndex) => {
       const finalItem = [...turn.items]
@@ -1817,14 +1815,14 @@
         .find(({ m }) => isFinalAssistantResponse(m));
       const hasAgent = turn.items.some(({ m }) => m.role === "assistant");
       const active = hasAgent && busy && turnIndex === rawTurns.length - 1 && !finalItem;
-      const userItems = turn.items.filter(({ m }) => m.role === "user");
+      const userItems = turn.items.filter(({ m }) => isTurnLead(m));
       const directItems = hasAgent
         ? []
-        : turn.items.filter(({ m }) => m.role !== "user");
+        : turn.items.filter(({ m }) => !isTurnLead(m));
       const workItems = hasAgent
         ? turn.items.filter(
             ({ m, i }) =>
-              m.role !== "user" &&
+              !isTurnLead(m) &&
               (i !== finalItem?.i || hasAssistantWork(m)),
           )
         : [];

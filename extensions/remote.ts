@@ -35,11 +35,28 @@ function lockDir(): string {
   );
 }
 
+type BranchEntry = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>[number];
+
+/** As Pi's createCustomMessage: a custom_message entry (e.g. a subagent notice) as a message. */
+function customMessage(entry: Extract<BranchEntry, { type: "custom_message" }>) {
+  return {
+    role: "custom",
+    customType: entry.customType,
+    content: entry.content,
+    display: entry.display,
+    details: entry.details,
+    timestamp: new Date(entry.timestamp).getTime(),
+  };
+}
+
 function messages(ctx: ExtensionContext, streamingMessage?: unknown): unknown[] {
-  const transcript = ctx.sessionManager
-    .getBranch()
-    .filter((entry) => entry.type === "message")
-    .map((entry) => entry.message);
+  const transcript = ctx.sessionManager.getBranch().flatMap((entry) =>
+    entry.type === "message"
+      ? [entry.message]
+      : entry.type === "custom_message"
+        ? [customMessage(entry)]
+        : [],
+  );
   return streamingMessage ? [...transcript, streamingMessage] : transcript;
 }
 
@@ -131,6 +148,27 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     if (index === -1) return;
     queue.steering.splice(index, 1);
     publishQueue();
+  }
+
+  // Pi appends custom messages sent between runs (subagent notices) without an extension
+  // event. Publish the new ones at the branch tail when a run or turn starts.
+  const announced = new Set<string>();
+  const customKey = (message: { customType?: unknown; content?: unknown }) =>
+    `${String(message.customType)}\n${typeof message.content === "string" ? message.content : JSON.stringify(message.content)}`;
+  function publishAppendedCustomMessages(ctx: ExtensionContext): void {
+    const branch = ctx.sessionManager.getBranch();
+    const tail: ReturnType<typeof customMessage>[] = [];
+    for (let i = branch.length - 1; i >= 0 && branch[i]!.type !== "message"; i -= 1) {
+      const entry = branch[i]!;
+      if (entry.type === "custom_message") tail.unshift(customMessage(entry));
+    }
+    for (const message of tail) {
+      const key = customKey(message);
+      if (announced.has(key)) continue;
+      announced.add(key);
+      publish({ type: "message_start", message });
+      publish({ type: "message_end", message });
+    }
   }
 
   /**
@@ -270,6 +308,7 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     streamingMessage = undefined;
     queue.steering.length = 0;
     queue.followUp.length = 0;
+    announced.clear();
 
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) {
@@ -342,8 +381,9 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     ctx.ui.setStatus("pi-remote", undefined);
   });
 
-  pi.on("agent_start", (event) => {
+  pi.on("agent_start", (event, ctx) => {
     runAborted = false;
+    publishAppendedCustomMessages(ctx);
     publish({ type: "agent_start", ...event });
   });
   pi.on("agent_end", (event) => {
@@ -360,7 +400,10 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     publish({ type: "agent_settled", ...event, contextUsage: currentContext?.getContextUsage?.() });
     if (next) pi.sendUserMessage(next.content, { deliverAs: "followUp" });
   });
-  pi.on("turn_start", (event) => publish({ type: "turn_start", ...event }));
+  pi.on("turn_start", (event, ctx) => {
+    publishAppendedCustomMessages(ctx);
+    publish({ type: "turn_start", ...event });
+  });
   pi.on("turn_end", (event) => publish({ type: "turn_end", ...event }));
   pi.on("message_start", (event) => {
     if (event.message?.role === "assistant") streamingMessage = event.message;
@@ -372,6 +415,7 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     publish({ type: "message_update", ...event });
   });
   pi.on("message_end", (event) => {
+    if (event.message?.role === "custom") announced.add(customKey(event.message));
     publish({ type: "message_end", ...event });
     lastPublishedStep = "";
     streamingMessage = undefined;
