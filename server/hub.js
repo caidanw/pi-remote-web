@@ -4,6 +4,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -568,7 +569,7 @@ export class SessionHub {
     const recent = cached.scannedAt !== undefined && Date.now() - cached.scannedAt < 10_000;
     if (cached.rows && recent && !opts.fresh) return cached.rows;
     if (!cached.inflight) {
-      cached.inflight = (cwd ? SessionManager.list(cwd) : SessionManager.listAll())
+      cached.inflight = (cwd ? SessionManager.list(cwd) : this.#listAllSessions())
         .then((rows) => {
           cached.scannedAt = Date.now();
           return (cached.rows = rows);
@@ -580,6 +581,42 @@ export class SessionHub {
       return cached.rows;
     }
     return cached.inflight;
+  }
+
+  /** @type {Map<string, { fingerprint: string; rows: any[] }>} */
+  #dirRows = new Map();
+
+  /**
+   * SessionManager.listAll, but a session directory is re-read only when one of its files
+   * changed: a full listing parses every file (1.5 GB, ~2.6 s CPU on a real history).
+   */
+  async #listAllSessions() {
+    const root = join(getAgentDir(), "sessions");
+    const dirs = (await readdir(root, { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map((entry) => join(root, entry.name));
+    const fingerprints = await Promise.all(dirs.map(async (dir) => {
+      const files = (await readdir(dir).catch(() => [])).filter((file) => file.endsWith(".jsonl"));
+      const marks = await Promise.all(files.map((file) =>
+        stat(join(dir, file)).then((info) => `${file}:${info.size}:${info.mtimeMs}`, () => file),
+      ));
+      return marks.sort().join("\n");
+    }));
+    const next = new Map();
+    // One directory at a time, like Pi's own bounded concurrency.
+    for (const [index, dir] of dirs.entries()) {
+      const fingerprint = fingerprints[index];
+      const cached = this.#dirRows.get(dir);
+      const rows = cached?.fingerprint === fingerprint
+        ? cached.rows
+        // allMessagesText (every message's text) is unused here and the bulk of a row.
+        : (await SessionManager.listAll(dir)).map(({ allMessagesText: _, ...row }) => row);
+      next.set(dir, { fingerprint, rows });
+    }
+    this.#dirRows = next;
+    return [...next.values()]
+      .flatMap((entry) => entry.rows)
+      .sort((a, b) => b.modified.getTime() - a.modified.getTime());
   }
 
   listOpen() {
