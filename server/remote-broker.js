@@ -246,7 +246,11 @@ export class RemoteBroker {
   #sendCommand(runtimeId, command, payload, timeoutMs) {
     const session = this.sessions.get(runtimeId);
     if (!session?.connected || !session.peer) {
-      return Promise.reject(new Error(`Remote session is not connected: ${runtimeId}`));
+      // Expected while a terminal reconnects: a 503 for the browser, not a logged server error.
+      return Promise.reject(Object.assign(new Error(`Remote session is not connected: ${runtimeId}`), {
+        status: 503,
+        code: "REMOTE_DISCONNECTED",
+      }));
     }
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {

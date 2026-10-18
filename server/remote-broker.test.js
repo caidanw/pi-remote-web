@@ -406,6 +406,8 @@ describe("remote broker", () => {
     assert.equal(row.runtimeId, "terminal");
     assert.ok(row.snapshot);
     assert.equal(broker.getSessionRow("terminal").running, false);
+    // Commands meanwhile fail as an expected 503, not a logged 500.
+    await assert.rejects(broker.command("terminal", "list_models"), { status: 503, code: "REMOTE_DISCONNECTED" });
     await waitFor(() => !broker.hasSession("terminal"));
     assert.equal(broker.findByPath("/tmp/terminal.jsonl"), null);
   });
