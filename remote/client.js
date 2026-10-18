@@ -145,31 +145,27 @@ export class RemoteClient {
       runtimeId: this.options.runtimeId,
       ...this.options.getSnapshot(),
     };
-    let encoded = encodeFrame(frame);
-    const oversize = Buffer.byteLength(encoded) > max;
-    if (oversize) {
-      const messages = Array.isArray(frame.messages) ? frame.messages : [];
-      let low = 0;
-      let high = messages.length;
-      while (low < high) {
-        const mid = Math.floor((low + high) / 2);
-        const candidate = encodeFrame({
-          ...frame,
-          messages: messages.slice(mid),
-          truncated: true,
-          droppedMessages: mid,
-        });
-        if (Buffer.byteLength(candidate) <= max) high = mid;
-        else low = mid + 1;
-      }
-      encoded = encodeFrame({
-        ...frame,
-        messages: messages.slice(low),
-        truncated: true,
-        droppedMessages: low,
-      });
-      if (Buffer.byteLength(encoded) > max) return;
+    const messages = Array.isArray(frame.messages) ? frame.messages : [];
+    // Size the newest messages one at a time until the frame is full. Encoding the whole
+    // transcript (60+ MB) and binary-searching it froze the terminal for ~0.2 s.
+    let budget = max - Buffer.byteLength(encodeFrame({
+      ...frame,
+      messages: [],
+      truncated: true,
+      droppedMessages: messages.length,
+    }));
+    let start = messages.length;
+    while (start > 0) {
+      const size = Buffer.byteLength(JSON.stringify(messages[start - 1]) ?? "null") + 1;
+      if (size > budget) break;
+      budget -= size;
+      start -= 1;
     }
+    const oversize = start > 0;
+    const encoded = encodeFrame(oversize
+      ? { ...frame, messages: messages.slice(start), truncated: true, droppedMessages: start }
+      : frame);
+    if (Buffer.byteLength(encoded) > max) return;
     if (encoded === this.lastSnapshot) return;
     this.lastSnapshot = encoded;
     if (oversize) {
