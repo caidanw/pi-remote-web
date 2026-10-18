@@ -42,7 +42,11 @@ describe("GET /api/sessions/changes", () => {
 
       broker.fire();
       broker.fire(); // same burst: one event
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      // Wait for the batch (250 ms) without a fixed sleep: under a loaded test run it lands late.
+      for (let i = 0; i < 100 && !body.includes("event: changed"); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
       assert.equal(body.match(/event: changed/g)?.length, 1);
 
       req.destroy();
