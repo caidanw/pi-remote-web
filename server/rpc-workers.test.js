@@ -422,8 +422,12 @@ describe("browser-owned Pi RPC workers", () => {
     await waitFor(() => turns.length === 1);
     assert.equal(turns[0].id, row.id);
     assert.equal(typeof turns[0].startedAt, "number");
+    assert.equal(turns[0].subagentWake, false);
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(turns.length, 1);
+    await manager.prompt(row.id, "Inspect subagent updates above. Answer pending supervisor requests.");
+    await waitFor(() => turns.length === 2);
+    assert.equal(turns[1].subagentWake, true);
   });
 
   it("closes worker pipes cleanly and leaves a resumable valid JSONL", async () => {

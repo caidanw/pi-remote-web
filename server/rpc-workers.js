@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isSubagentWake } from "./push.js";
 import { upsertMessage } from "./remote-broker.js";
 import { assertNoUnregisteredWriter } from "./live-session-guard.js";
 import {
@@ -79,7 +80,7 @@ function busyState(state, bashRunning = false) {
 /** One isolated `pi --mode rpc` child per browser-owned session. */
 export class RpcWorkerManager {
   /**
-   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string; shutdownTimeoutMs?: number; maxFrameBytes?: number; guardOptions?: { now?: () => number; recentWriteMs?: number }; onTurnEnd?: (turn: { id: string; name?: string; startedAt?: number; message?: unknown }) => void }} [options]
+   * @param {{ lockDir?: string; rpcEntry?: string; spawnProcess?: typeof spawn; env?: NodeJS.ProcessEnv; sessionDir?: (cwd: string) => string; shutdownTimeoutMs?: number; maxFrameBytes?: number; guardOptions?: { now?: () => number; recentWriteMs?: number }; onTurnEnd?: (turn: { id: string; name?: string; startedAt?: number; message?: unknown; subagentWake?: boolean }) => void }} [options]
    */
   constructor(options = {}) {
     this.lockDir = options.lockDir ?? path.join(getAgentDir(), "remote", "locks");
@@ -596,16 +597,22 @@ export class RpcWorkerManager {
           name: worker.state.sessionName,
           startedAt: worker.turnStartedAt,
           message: worker.lastAssistant,
+          subagentWake: Boolean(worker.turnWoken && !worker.turnAsked),
         });
       }
       worker.turnStartedAt = undefined;
       worker.lastAssistant = undefined;
+      worker.turnWoken = worker.turnAsked = false;
     }
     if (event.type === "message_start" || event.type === "message_update") {
       if (event.message?.role === "assistant") worker.streamingMessage = event.message;
     }
     if (event.type === "message_end") {
       if (event.message?.role === "assistant") worker.lastAssistant = event.message;
+      if (event.message?.role === "user") {
+        if (isSubagentWake(event.message)) worker.turnWoken = true;
+        else worker.turnAsked = true;
+      }
       worker.streamingMessage = null;
       // Refetching the whole context per message moved megabytes each step; settle still resyncs.
       if (event.message) upsertMessage(worker, event.message);

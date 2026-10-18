@@ -148,6 +148,15 @@ describe("remote broker", () => {
     assert.equal(turns[0].id, "terminal");
     assert.deepEqual(turns[0].message, answer);
     assert.equal(typeof turns[0].startedAt, "number");
+    assert.equal(turns[0].subagentWake, false);
+
+    // A run started by pi-subagents' wake message is flagged so it doesn't notify.
+    const wake = { role: "user", timestamp: 6, content: [{ type: "text", text: "Inspect subagent updates above. Answer pending supervisor requests." }] };
+    client.publish({ type: "agent_start" });
+    client.publish({ type: "message_end", message: wake });
+    client.publish({ type: "agent_settled" });
+    await waitFor(() => turns.length === 2);
+    assert.equal(turns[1].subagentWake, true);
   });
 
   it("builds the transcript from streamed messages without full snapshots", async () => {

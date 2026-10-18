@@ -121,7 +121,10 @@ const push = await new PushNotifier({
   file: join(auth.configDir, "push.json"),
   subject: auth.publicUrl?.origin ?? "mailto:pi-remote-web@users.noreply.github.com",
 }).init();
-const onTurnEnd = (turn) => void push.send(turnNotification(turn));
+// A run only pi-subagents started (its wake message) isn't one you're waiting on.
+const onTurnEnd = (turn) => {
+  if (!turn.subagentWake) void push.send(turnNotification(turn));
+};
 const workers = new RpcWorkerManager({ onTurnEnd });
 console.log(`[pi-remote-web] workers run ${workers.command.join(" ")}`);
 const worktrees = new WorktreeManager();

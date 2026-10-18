@@ -89,6 +89,18 @@ function formatDuration(ms) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+/** pi-subagents wakes an idle parent with this user message; it isn't you asking. */
+export function isSubagentWake(message) {
+  if (message?.role !== "user") return false;
+  const { content } = message;
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? (content.find((part) => part?.type === "text")?.text ?? "")
+      : "";
+  return text.startsWith("Inspect subagent updates above.");
+}
+
 /**
  * Notification for a finished turn.
  * @param {{ id: string; name?: string; startedAt?: number; message?: any; now?: number }} turn

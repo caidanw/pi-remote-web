@@ -2,6 +2,7 @@ import net from "node:net";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
+import { isSubagentWake } from "./push.js";
 import {
   REMOTE_PROTOCOL_VERSION,
   createFrameParser,
@@ -73,7 +74,7 @@ export class RemoteBroker {
     onTurnEnd = undefined,
   }) {
     this.socketPath = socketPath;
-    /** @type {((turn: { id: string; name?: string; startedAt?: number; message?: unknown }) => void) | undefined} */
+    /** @type {((turn: { id: string; name?: string; startedAt?: number; message?: unknown; subagentWake?: boolean }) => void) | undefined} */
     this.onTurnEnd = onTurnEnd;
     this.reconnectGraceMs = reconnectGraceMs;
     this.requestTakeover = requestTakeover;
@@ -477,6 +478,10 @@ export class RemoteBroker {
     if (event.type === "message_end" && isRecord(event.message) && event.message.role === "assistant") {
       session.lastAssistant = event.message;
     }
+    if (event.type === "message_end" && isRecord(event.message) && event.message.role === "user") {
+      if (isSubagentWake(event.message)) session.turnWoken = true;
+      else session.turnAsked = true;
+    }
     if (event.type === "agent_settled") {
       meta.streaming = false;
       if (isRecord(event.contextUsage)) meta.contextUsage = event.contextUsage;
@@ -487,10 +492,12 @@ export class RemoteBroker {
           name: typeof meta.name === "string" ? meta.name : undefined,
           startedAt: session.turnStartedAt,
           message: session.lastAssistant,
+          subagentWake: Boolean(session.turnWoken && !session.turnAsked),
         });
       }
       session.turnStartedAt = undefined;
       session.lastAssistant = undefined;
+      session.turnWoken = session.turnAsked = false;
     }
     if (event.type === "model_select" && isRecord(event.model)) {
       meta.model = {
