@@ -128,6 +128,23 @@ describe("browser-owned Pi RPC workers", () => {
     assert.equal(await readFile(auditFile, "utf8"), "slow first\nsecond\n");
   });
 
+  it("opens a session whose context is larger than the socket frame limit", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-rpc-big-"));
+    const manager = new RpcWorkerManager({
+      rpcEntry: fixtureRpc,
+      lockDir: path.join(root, "locks"),
+      sessionDir: () => path.join(root, "sessions"),
+      // Real sessions with screenshots reach 9 MB of context; 8 MB used to kill the worker.
+      env: { PI_TEST_CONTEXT_CHARS: String(12 * 1024 * 1024) },
+    });
+    cleanups.push(async () => {
+      await manager.closeAll();
+      await rm(root, { recursive: true, force: true });
+    });
+    const row = await manager.open({ cwd: root, fresh: true });
+    assert.equal(manager.getMessages(row.id)[0].content.length, 12 * 1024 * 1024);
+  });
+
   it("reports context usage on open and refreshes it when a turn settles", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-rpc-usage-"));
     const manager = new RpcWorkerManager({

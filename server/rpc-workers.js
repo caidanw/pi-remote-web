@@ -5,7 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_MAX_FRAME_BYTES } from "../remote/protocol.js";
+import { upsertMessage } from "./remote-broker.js";
 import { assertNoUnregisteredWriter } from "./live-session-guard.js";
 import {
   acquireSessionLock,
@@ -16,6 +16,9 @@ import {
 const RING_MAX = 500;
 const REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
+// A worker is our own child and its frames carry the whole context, images included
+// (9 MB on real sessions). The 8 MB socket limit is for untrusted peers.
+const RPC_MAX_FRAME_CHARS = 256 * 1024 * 1024;
 const RPC_ENTRY = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent/rpc-entry"));
 
 /**
@@ -91,7 +94,7 @@ export class RpcWorkerManager {
     this.onTurnEnd = options.onTurnEnd;
     this.sessionDir = options.sessionDir;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
-    this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+    this.maxFrameBytes = options.maxFrameBytes ?? RPC_MAX_FRAME_CHARS;
     /** @type {Map<string, any>} */
     this.workers = new Map();
     /** Listeners for "the browser-session list changed" (added, removed, exited). */
@@ -501,20 +504,20 @@ export class RpcWorkerManager {
       protocolError: null,
     };
     let buffer = "";
+    // Large frames arrive in many chunks: only scan the new part, and count characters
+    // rather than re-encoding the whole buffer on every chunk.
+    let scanFrom = 0;
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       if (worker.protocolError) return;
       buffer += chunk;
-      if (Buffer.byteLength(buffer) > this.maxFrameBytes && !buffer.includes("\n")) {
-        this.#protocolFatal(worker, new Error("Pi RPC frame exceeds size limit"));
-        return;
-      }
       let newline;
-      while ((newline = buffer.indexOf("\n")) >= 0) {
+      while ((newline = buffer.indexOf("\n", scanFrom)) >= 0) {
         const line = buffer.slice(0, newline).replace(/\r$/, "");
         buffer = buffer.slice(newline + 1);
+        scanFrom = 0;
         if (!line) continue;
-        if (Buffer.byteLength(line) > this.maxFrameBytes) {
+        if (line.length > this.maxFrameBytes) {
           this.#protocolFatal(worker, new Error("Pi RPC frame exceeds size limit"));
           return;
         }
@@ -527,6 +530,10 @@ export class RpcWorkerManager {
           );
           return;
         }
+      }
+      scanFrom = buffer.length;
+      if (buffer.length > this.maxFrameBytes) {
+        this.#protocolFatal(worker, new Error("Pi RPC frame exceeds size limit"));
       }
     });
     child.stdout.on("end", () => {
@@ -596,7 +603,8 @@ export class RpcWorkerManager {
     if (event.type === "message_end") {
       if (event.message?.role === "assistant") worker.lastAssistant = event.message;
       worker.streamingMessage = null;
-      void this.#refreshMessages(worker);
+      // Refetching the whole context per message moved megabytes each step; settle still resyncs.
+      if (event.message) upsertMessage(worker, event.message);
     }
     if (event.type === "bash_start") worker.bashRunning = true;
     if (event.type === "bash_end") worker.bashRunning = false;

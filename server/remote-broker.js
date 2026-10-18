@@ -17,7 +17,7 @@ function sessionIdentity(frame) {
 }
 
 /** @param {Record<string, unknown>} snapshot @param {Record<string, unknown>} message */
-function upsertMessage(snapshot, message) {
+export function upsertMessage(snapshot, message) {
   const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
   snapshot.messages = messages;
   const key = messageIdentity(message);
