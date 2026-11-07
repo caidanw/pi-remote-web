@@ -103,7 +103,8 @@ describe("remote extension", () => {
       const registered = await waitFor(() => broker.listSessions()[0] ?? null);
       assert.equal(registered.registration?.session.name, "Live terminal");
       assert.equal(registered.snapshot?.sessionId, "session-id");
-      assert.ok(statuses.includes("remote: connected"));
+      // A healthy connection leaves the footer alone; it would otherwise cost a whole line.
+      assert.deepEqual(statuses, []);
 
       assert.deepEqual(
         await broker.command(registered.runtimeId, "prompt", { message: "from browser" }),
@@ -321,6 +322,67 @@ describe("remote extension", () => {
       else process.env.PI_REMOTE_WEB_SOCKET = previousSocket;
       if (previousLocks === undefined) delete process.env.PI_REMOTE_WEB_LOCK_DIR;
       else process.env.PI_REMOTE_WEB_LOCK_DIR = previousLocks;
+    }
+  });
+
+  it("reports a daemon that stays down, then clears once it connects", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pi-remote-web-down-"));
+    const socketPath = path.join(dir, "broker.sock");
+    const saved = {
+      PI_REMOTE_WEB_SOCKET: process.env.PI_REMOTE_WEB_SOCKET,
+      PI_REMOTE_WEB_LOCK_DIR: process.env.PI_REMOTE_WEB_LOCK_DIR,
+      PI_REMOTE_WEB_DOWN_GRACE_MS: process.env.PI_REMOTE_WEB_DOWN_GRACE_MS,
+    };
+    process.env.PI_REMOTE_WEB_SOCKET = socketPath;
+    process.env.PI_REMOTE_WEB_LOCK_DIR = path.join(dir, "locks");
+    process.env.PI_REMOTE_WEB_DOWN_GRACE_MS = "50";
+    const broker = new RemoteBroker({ socketPath });
+
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    let status: string | undefined;
+    const pi = {
+      on(name: string, handler: (...args: unknown[]) => unknown) {
+        handlers.set(name, handler);
+      },
+      getSessionName: () => "Down",
+      getThinkingLevel: () => "off",
+    };
+    const context = {
+      mode: "tui",
+      cwd: dir,
+      isIdle: () => true,
+      shutdown: () => assert.fail("session should not be rejected"),
+      sessionManager: {
+        getSessionId: () => "down-session",
+        getSessionFile: () => path.join(dir, "session.jsonl"),
+        getLeafId: () => null,
+        getBranch: () => [],
+      },
+      ui: {
+        setStatus: (_key: string, value?: string) => {
+          status = value;
+        },
+        notify: () => {},
+      },
+    };
+
+    try {
+      remoteExtension(pi as unknown as ExtensionAPI);
+      await handlers.get("session_start")?.({}, context);
+      assert.equal(status, undefined, "no flash before the grace period");
+      await waitFor(() => status === "remote: down");
+
+      await broker.listen();
+      await waitFor(() => broker.listSessions()[0] ?? null, 3000);
+      await waitFor(() => status === undefined);
+      await handlers.get("session_shutdown")?.({}, context);
+    } finally {
+      await broker.close();
+      await rm(dir, { recursive: true, force: true });
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 

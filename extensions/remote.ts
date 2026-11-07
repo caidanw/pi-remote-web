@@ -29,6 +29,15 @@ function socketPath(): string {
   );
 }
 
+/**
+ * The footer gives extension statuses a whole line, so stay silent while connected and only
+ * report a daemon that stays unreachable past the startup handshake and retry jitter.
+ */
+function downGraceMs(): number {
+  const value = Number(process.env.PI_REMOTE_WEB_DOWN_GRACE_MS);
+  return Number.isFinite(value) && value >= 0 ? value : 5000;
+}
+
 function lockDir(): string {
   return (
     process.env.PI_REMOTE_WEB_LOCK_DIR ??
@@ -90,6 +99,12 @@ export default function remoteExtension(pi: ExtensionAPI): void {
     followUp: [] as { text: string; content: ReturnType<typeof promptContent> }[],
   };
   let runAborted = false;
+  let downTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearDownTimer(): void {
+    if (downTimer) clearTimeout(downTimer);
+    downTimer = null;
+  }
 
   function publish(event: unknown, snapshot = false): void {
     client?.publish(event);
@@ -284,6 +299,7 @@ export default function remoteExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
     client?.stop();
+    clearDownTimer();
     if (currentLock) await releaseSessionLock(currentLock);
     currentLock = null;
     currentContext = ctx;
@@ -346,8 +362,16 @@ export default function remoteExtension(pi: ExtensionAPI): void {
       onCommand: handleCommand,
       onState: (state) => {
         if (currentContext !== ctx) return;
-        const text = state === "connected" ? "remote: connected" : "remote: waiting";
-        ctx.ui.setStatus("pi-remote", text);
+        if (state === "connected") {
+          clearDownTimer();
+          ctx.ui.setStatus("pi-remote", undefined);
+        } else if (!downTimer) {
+          // Retries alternate connecting/disconnected; keep the first deadline instead of resetting it.
+          downTimer = setTimeout(() => {
+            if (currentContext === ctx) ctx.ui.setStatus("pi-remote", "remote: down");
+          }, downGraceMs());
+          downTimer.unref?.();
+        }
       },
     });
     client.start();
@@ -356,6 +380,7 @@ export default function remoteExtension(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
     client?.stop();
+    clearDownTimer();
     client = null;
     currentContext = null;
     if (currentLock) await releaseSessionLock(currentLock);
