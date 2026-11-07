@@ -13,6 +13,7 @@ import {
   readServiceLogs,
   serviceConfig,
   serviceStatus,
+  stableNodePath,
   uninstallService,
 } from "./service.js";
 import { serviceExitCode } from "./service-runtime.js";
@@ -57,6 +58,23 @@ describe("macOS service operations", () => {
     assert.equal(serviceExitCode(false, 7, null), 7);
   });
 
+  it("points launchd at a node that survives a Homebrew upgrade", async () => {
+    const { root } = await fixture();
+    const cellarBin = path.join(root, "Cellar", "node", "26.7.0", "bin");
+    const brewBin = path.join(root, "bin");
+    await mkdir(cellarBin, { recursive: true });
+    await mkdir(brewBin);
+    const versioned = path.join(cellarBin, "node");
+    await writeFile(versioned, "node");
+    await chmod(versioned, 0o755);
+    await symlink(versioned, path.join(brewBin, "node"));
+
+    const searchPath = ["relative", cellarBin, brewBin].join(path.delimiter);
+    assert.equal(stableNodePath(versioned, searchPath), path.join(brewBin, "node"));
+    // No PATH entry links to it: keep the binary we were run with.
+    assert.equal(stableNodePath(versioned, cellarBin), versioned);
+  });
+
   it("renders an escaped, argument-array LaunchAgent", async () => {
     const config = serviceConfig({
       ...(await fixture()),
@@ -69,6 +87,8 @@ describe("macOS service operations", () => {
     assert.ok(plist.includes("<key>RunAtLoad</key>"));
     assert.ok(plist.includes("<key>SuccessfulExit</key>"));
     assert.ok(!plist.includes("/bin/sh"));
+    assert.ok(!plist.includes("/dev/null"));
+    assert.equal(plist.split(`<string>${config.launchdLogPath}</string>`).length - 1, 2);
   });
 
   it("installs idempotently with modern per-user launchctl commands", async () => {
@@ -76,6 +96,7 @@ describe("macOS service operations", () => {
     const recorded = recorder(true);
     const config = await installService({ ...options, run: recorded.run });
     assert.equal((await stat(config.plistPath)).mode & 0o777, 0o600);
+    assert.equal((await stat(config.launchdLogPath)).mode & 0o777, 0o600);
     assert.deepEqual(
       recorded.calls.map(([, args]) => args[0]),
       ["bootout", "bootstrap", "kickstart"],
@@ -139,7 +160,7 @@ describe("macOS service operations", () => {
     assert.equal(status.localUrl, "http://127.0.0.1:4999");
     assert.equal(status.publicUrl, "https://remote.example.test");
     assert.equal(status.stale, false);
-    assert.deepEqual(await readServiceLogs({ ...options, lines: 2 }), { stdout: "three\n", stderr: "" });
+    assert.deepEqual(await readServiceLogs({ ...options, lines: 2 }), { stdout: "three\n", stderr: "", launchd: "" });
   });
 
   it("marks stale or unsafe runtime status instead of reporting counts", async () => {

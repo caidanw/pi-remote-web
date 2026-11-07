@@ -2,6 +2,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import { constants } from "node:fs";
+import { accessSync, lstatSync, realpathSync } from "node:fs";
 import { access, chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +30,34 @@ function envXml(environment) {
     .join("\n")}\n  </dict>`;
 }
 
+/**
+ * process.execPath is the versioned binary (e.g. /opt/homebrew/Cellar/node/26.7.0/bin/node),
+ * which disappears on the next `brew upgrade` and leaves launchd failing with EX_CONFIG.
+ * Prefer a PATH entry (e.g. /opt/homebrew/bin/node) that links to the same binary today and
+ * follows upgrades.
+ */
+export function stableNodePath(execPath = process.execPath, searchPath = process.env.PATH ?? "") {
+  let target;
+  try {
+    target = realpathSync(execPath);
+  } catch {
+    return execPath;
+  }
+  for (const dir of searchPath.split(path.delimiter)) {
+    if (!path.isAbsolute(dir)) continue;
+    const candidate = path.join(dir, "node");
+    try {
+      // Only a link can follow upgrades; the versioned binary itself may also sit on PATH.
+      if (!lstatSync(candidate).isSymbolicLink()) continue;
+      accessSync(candidate, constants.X_OK);
+      if (realpathSync(candidate) === target) return candidate;
+    } catch {
+      // not here; keep looking
+    }
+  }
+  return execPath;
+}
+
 export function serviceConfig(options = {}) {
   const home = path.resolve(options.home ?? os.homedir());
   const uid = options.uid ?? process.getuid?.();
@@ -43,7 +72,7 @@ export function serviceConfig(options = {}) {
     home,
     uid,
     domain: `gui/${uid}`,
-    nodePath: path.resolve(options.nodePath ?? process.execPath),
+    nodePath: path.resolve(options.nodePath ?? stableNodePath(process.execPath, options.path ?? process.env.PATH)),
     runnerPath: path.resolve(
       options.runnerPath ?? fileURLToPath(new URL("./service-runner.js", import.meta.url)),
     ),
@@ -55,6 +84,9 @@ export function serviceConfig(options = {}) {
     statusPath: path.join(stateDir, "status.json"),
     stdoutPath: path.join(logsDir, "stdout.log"),
     stderrPath: path.join(logsDir, "stderr.log"),
+    // The runner rotates stdout/stderr.log itself; launchd holds its fd open, so it gets its own file
+    // for output the runner can't capture (import failures, crashes before the child pipes exist).
+    launchdLogPath: path.join(logsDir, "launchd.log"),
     environment: {
       PI_REMOTE_WEB_PORT: String(options.port ?? process.env.PI_REMOTE_WEB_PORT ?? 3847),
       PI_REMOTE_WEB_PUBLIC_URL: options.publicUrl ?? process.env.PI_REMOTE_WEB_PUBLIC_URL,
@@ -88,9 +120,9 @@ export function launchAgentPlist(config) {
   <key>ProcessType</key>
   <string>Interactive</string>
   <key>StandardOutPath</key>
-  <string>/dev/null</string>
+  <string>${xml(config.launchdLogPath)}</string>
   <key>StandardErrorPath</key>
-  <string>/dev/null</string>
+  <string>${xml(config.launchdLogPath)}</string>
 </dict>
 </plist>
 `;
@@ -207,6 +239,7 @@ export async function installService(options = {}) {
   await chmod(temporary, 0o600);
   await secureLogFile(config.stdoutPath, config.uid);
   await secureLogFile(config.stderrPath, config.uid);
+  await secureLogFile(config.launchdLogPath, config.uid);
   await rename(temporary, config.plistPath);
   await ignoreMissing(() => run("/bin/launchctl", ["bootout", config.domain, config.plistPath]));
   await run("/bin/launchctl", ["bootstrap", config.domain, config.plistPath]);
@@ -393,5 +426,9 @@ export async function readServiceLogs(options = {}) {
       return "";
     }
   };
-  return { stdout: await read(config.stdoutPath), stderr: await read(config.stderrPath) };
+  return {
+    stdout: await read(config.stdoutPath),
+    stderr: await read(config.stderrPath),
+    launchd: await read(config.launchdLogPath),
+  };
 }

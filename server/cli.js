@@ -79,6 +79,7 @@ if (["install", "uninstall", "start", "stop", "restart", "status", "doctor", "lo
   } else {
     const logs = await readServiceLogs();
     process.stdout.write(`== stdout ==\n${logs.stdout}\n== stderr ==\n${logs.stderr}\n`);
+    if (logs.launchd.trim()) process.stdout.write(`== launchd ==\n${logs.launchd}\n`);
   }
   process.exit();
 }
